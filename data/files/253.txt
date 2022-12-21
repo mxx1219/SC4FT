@@ -1,0 +1,28 @@
+package io.strimzi.operator.common.operator.resource;
+import io.fabric8.kubernetes.api.model.DoneableNode;
+import io.fabric8.kubernetes.api.model.Node;
+import io.fabric8.kubernetes.api.model.NodeBuilder;
+import io.fabric8.kubernetes.api.model.NodeList;
+import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.dsl.Resource;
+import io.vertx.junit5.VertxExtension;
+import io.vertx.junit5.VertxTestContext;
+import org.junit.jupiter.api.extension.ExtendWith;
+import java.util.Collections.singletonMap;
+import org.hamcrest.CoreMatchers.is;
+import org.hamcrest.MatcherAssert.assertThat;
+@ExtendWith(VertxExtension.class) public class NodeOperatorIT extends AbstractNonNamespacedResourceOperatorIT<KubernetesClient,Node,NodeList,DoneableNode,Resource<Node,DoneableNode>> {
+  @Override protected AbstractNonNamespacedResourceOperator<KubernetesClient,Node,NodeList,DoneableNode,Resource<Node,DoneableNode>> operator(){
+  }
+  @Override protected Node getOriginal(){
+    return new NodeBuilder().withNewMetadata().withName(resourceName).withLabels(singletonMap("foo","bar")).endMetadata().withNewSpec().withNewUnschedulable(true).endSpec().build();
+  }
+  @Override protected Node getModified(){
+    return new NodeBuilder().withNewMetadata().withName(resourceName).withLabels(singletonMap("bar","foo")).endMetadata().withNewSpec().withNewUnschedulable(true).endSpec().build();
+  }
+  @Override protected void assertResources(  VertxTestContext context,  Node expected,  Node actual){
+    context.verify(null);
+    context.verify(null);
+    context.verify(null);
+  }
+}

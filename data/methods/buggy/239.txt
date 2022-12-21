@@ -1,0 +1,17 @@
+@Override public AssertionResult getResult(SampleResult response){
+  AssertionResult result=new AssertionResult(getName());
+  try {
+    ScriptEngine scriptEngine=getScriptEngine();
+    Bindings bindings=scriptEngine.createBindings();
+    bindings.put("SampleResult",response);
+    bindings.put("AssertionResult",result);
+    processFileOrScript(scriptEngine,bindings);
+    result.setError(false);
+  }
+ catch (  IOException|ScriptException e) {
+    log.error("Problem in JSR223 script: {}",getName(),e);
+    result.setError(true);
+    result.setFailureMessage(e.toString());
+  }
+  return result;
+}

@@ -1,0 +1,11 @@
+@Override public void onSelection(@NonNull MaterialDialog materialDialog,View view,int i,CharSequence charSequence){
+  final ArrayList<Song> songs=(ArrayList<Song>)getArguments().getSerializable("songs");
+  if (i == 0) {
+    materialDialog.dismiss();
+    CreatePlaylistDialog.create(songs).show(getActivity().getSupportFragmentManager(),"ADD_TO_PLAYLIST");
+  }
+ else {
+    materialDialog.dismiss();
+    PlaylistsUtil.addToPlaylist(getActivity(),songs,playlists.get(i - 1).id,true);
+  }
+}

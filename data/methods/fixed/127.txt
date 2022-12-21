@@ -1,0 +1,15 @@
+protected void setupDevConfig(){
+  if (System.getProperty("keycloak.createAdminUser","true").equals("true")) {
+    KeycloakSession session=sessionFactory.create();
+    try {
+      session.getTransaction().begin();
+      if (new ApplianceBootstrap(session).isNoMasterUser()) {
+        new ApplianceBootstrap(session).createMasterRealmUser("admin","admin");
+      }
+      session.getTransaction().commit();
+    }
+  finally {
+      session.close();
+    }
+  }
+}

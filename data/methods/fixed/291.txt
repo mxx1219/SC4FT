@@ -1,0 +1,5 @@
+public Stream<LazyString> split(final F<Character,Boolean> p){
+  final Stream<Character> findIt=s.dropWhile(p);
+  final P2<Stream<Character>,Stream<Character>> ws=findIt.split(p);
+  return findIt.isEmpty() ? Stream.nil() : Stream.cons(fromStream(ws._1()),null);
+}

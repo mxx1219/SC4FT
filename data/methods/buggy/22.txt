@@ -1,0 +1,72 @@
+@Test public void testJobExecutionOnClusterWithLeaderReelection() throws Exception {
+  int numJMs=10;
+  int numTMs=2;
+  int numSlotsPerTM=3;
+  int parallelism=numTMs * numSlotsPerTM;
+  Configuration configuration=new Configuration();
+  configuration.setString(ConfigConstants.RECOVERY_MODE,"zookeeper");
+  configuration.setInteger(ConfigConstants.LOCAL_NUMBER_JOB_MANAGER,numJMs);
+  configuration.setInteger(ConfigConstants.LOCAL_NUMBER_TASK_MANAGER,numTMs);
+  configuration.setInteger(ConfigConstants.TASK_MANAGER_NUM_TASK_SLOTS,numSlotsPerTM);
+  configuration.setString(ConfigConstants.STATE_BACKEND,"filesystem");
+  configuration.setString(ConfigConstants.ZOOKEEPER_RECOVERY_PATH,tempDirectory.getAbsoluteFile().toURI().toString());
+  configuration.setString(ConfigConstants.DEFAULT_EXECUTION_RETRY_DELAY_KEY,AkkaUtils.INF_TIMEOUT().toString());
+  Tasks.BlockingOnceReceiver$.MODULE$.blocking_$eq(true);
+  JobVertex sender=new JobVertex("sender");
+  JobVertex receiver=new JobVertex("receiver");
+  sender.setInvokableClass(Tasks.Sender.class);
+  receiver.setInvokableClass(Tasks.BlockingOnceReceiver.class);
+  sender.setParallelism(parallelism);
+  receiver.setParallelism(parallelism);
+  receiver.connectNewDataSetAsInput(sender,DistributionPattern.POINTWISE);
+  SlotSharingGroup slotSharingGroup=new SlotSharingGroup();
+  sender.setSlotSharingGroup(slotSharingGroup);
+  receiver.setSlotSharingGroup(slotSharingGroup);
+  final JobGraph graph=new JobGraph("Blocking test job",sender,receiver);
+  final ForkableFlinkMiniCluster cluster=new ForkableFlinkMiniCluster(configuration);
+  ActorSystem clientActorSystem=null;
+  Thread thread=null;
+  JobSubmitterRunnable jobSubmission=null;
+  try {
+    cluster.start();
+    clientActorSystem=cluster.startJobClientActorSystem(graph.getJobID());
+    final ActorSystem clientAS=clientActorSystem;
+    jobSubmission=new JobSubmitterRunnable(clientAS,cluster,graph);
+    thread=new Thread(jobSubmission);
+    thread.start();
+    Deadline deadline=timeout.$times(3).fromNow();
+    for (int i=0; i < numJMs; i++) {
+      ActorGateway jm=cluster.getLeaderGateway(deadline.timeLeft());
+      cluster.waitForTaskManagersToBeRegisteredAtJobManager(jm.actor());
+      log.info("Sent recover all jobs manually to job manager {}.",jm.path());
+      jm.tell(JobManagerMessages.getRecoverAllJobs());
+      if (i < numJMs - 1) {
+        Future<Object> future=jm.ask(new WaitForAllVerticesToBeRunningOrFinished(graph.getJobID()),deadline.timeLeft());
+        Await.ready(future,deadline.timeLeft());
+        cluster.clearLeader();
+        if (i == numJMs - 2) {
+          Tasks.BlockingOnceReceiver$.MODULE$.blocking_$eq(false);
+        }
+        log.info("Kill job manager {}.",jm.path());
+        jm.tell(TestingJobManagerMessages.getDisablePostStop());
+        jm.tell(Kill.getInstance());
+      }
+    }
+    log.info("Waiting for submitter thread to terminate.");
+    thread.join(deadline.timeLeft().toMillis());
+    log.info("Submitter thread has terminated.");
+    if (thread.isAlive()) {
+      fail("The job submission thread did not stop (meaning it did not succeeded in" + "executing the test job.");
+    }
+    Await.result(jobSubmission.resultPromise.future(),deadline.timeLeft());
+  }
+  finally {
+    if (clientActorSystem != null) {
+      cluster.shutdownJobClientActorSystem(clientActorSystem);
+    }
+    if (thread != null && thread.isAlive()) {
+      jobSubmission.finished=true;
+    }
+    cluster.stop();
+  }
+}

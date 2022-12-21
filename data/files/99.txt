@@ -1,0 +1,82 @@
+package com.questdb.cairo;
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
+import com.questdb.std.Files;
+import com.questdb.std.FilesFacade;
+import com.questdb.std.str.LPSZ;
+public class ReadWriteMemory extends VirtualMemory {
+  private static final Log LOG=LogFactory.getLog(ReadWriteMemory.class);
+  private FilesFacade ff;
+  private long fd=-1;
+  public ReadWriteMemory(  FilesFacade ff,  LPSZ name,  long maxPageSize){
+    of(ff,name,maxPageSize);
+  }
+  public ReadWriteMemory(){
+  }
+  @Override public void close(){
+    long size=getAppendOffset();
+    super.close();
+    if (fd != -1) {
+      try {
+        if (ff.truncate(fd,size)) {
+          LOG.info().$("truncated and closed [fd=").$(fd).$(']').$();
+        }
+ else {
+          if (!ff.supportsTruncateMappedFiles()) {
+            long n=size / getMapPageSize();
+            if (ff.truncate(fd,(n + 1) * getMapPageSize())) {
+              LOG.info().$("truncated and closed, second attempt [fd=").$(fd).$(']').$();
+              return;
+            }
+          }
+          LOG.info().$("closed without truncate [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
+        }
+      }
+  finally {
+        ff.close(fd);
+        fd=-1;
+      }
+    }
+  }
+  @Override protected long allocateNextPage(  int page){
+    long address;
+    long offset=pageOffset(page);
+    final long pageSize=getMapPageSize();
+    if (ff.length(fd) < offset + pageSize) {
+      ff.truncate(fd,offset + pageSize);
+    }
+    address=ff.mmap(fd,pageSize,offset,Files.MAP_RW);
+    if (address == -1) {
+      throw CairoException.instance(ff.errno()).put("Cannot mmap read-write fd=").put(fd).put(", offset=").put(offset).put(", size=").put(pageSize);
+    }
+    return address;
+  }
+  @Override protected long getPageAddress(  int page){
+    return mapWritePage(page);
+  }
+  @Override protected void release(  int page,  long address){
+    ff.munmap(address,getPageSize(page));
+  }
+  public long getFd(){
+    return fd;
+  }
+  public final void of(  FilesFacade ff,  LPSZ name,  long pageSize){
+    close();
+    this.ff=ff;
+    fd=ff.openRW(name);
+    if (fd == -1) {
+      throw CairoException.instance(ff.errno()).put("Cannot open file: ").put(name);
+    }
+    long size=ff.length(fd);
+    setPageSize(pageSize);
+    ensurePagesListCapacity(size);
+    LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
+    try {
+      jumpTo(size);
+    }
+ catch (    CairoException e) {
+      ff.close(fd);
+      throw e;
+    }
+  }
+}

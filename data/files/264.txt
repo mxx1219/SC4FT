@@ -1,0 +1,19 @@
+package android.graphics;
+public class BitmapShader extends Shader {
+  @SuppressWarnings({"FieldCanBeLocal","UnusedDeclaration"}) public final Bitmap mBitmap;
+  private TileMode mTileX;
+  private TileMode mTileY;
+  public BitmapShader(  Bitmap bitmap,  TileMode tileX,  TileMode tileY){
+    mBitmap=bitmap;
+    mTileX=tileX;
+    mTileY=tileY;
+    final long b=bitmap.ni();
+    init(nativeCreate(b,tileX.nativeInt,tileY.nativeInt));
+  }
+  @Override protected Shader copy(){
+    final BitmapShader copy=new BitmapShader(mBitmap,mTileX,mTileY);
+    copyLocalMatrix(copy);
+    return copy;
+  }
+  private static native long nativeCreate(  long native_bitmap,  int shaderTileModeX,  int shaderTileModeY);
+}

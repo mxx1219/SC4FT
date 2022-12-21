@@ -1,0 +1,58 @@
+@Before public void setup() throws YarnException, IOException {
+  conf=new YarnConfiguration();
+  yarnCluster=new MiniYARNCluster(TestAMRMClient.class.getName(),nodeCount,1,1);
+  yarnCluster.init(conf);
+  yarnCluster.start();
+  assertNotNull(yarnCluster);
+  assertEquals(STATE.STARTED,yarnCluster.getServiceState());
+  yarnClient=(YarnClientImpl)YarnClient.createYarnClient();
+  yarnClient.init(conf);
+  yarnClient.start();
+  assertNotNull(yarnClient);
+  assertEquals(STATE.STARTED,yarnClient.getServiceState());
+  nodeReports=yarnClient.getNodeReports(NodeState.RUNNING);
+  ApplicationSubmissionContext appContext=yarnClient.createApplication().getApplicationSubmissionContext();
+  ApplicationId appId=appContext.getApplicationId();
+  appContext.setApplicationName("Test");
+  Priority pri=Priority.newInstance(0);
+  appContext.setPriority(pri);
+  appContext.setQueue("default");
+  ContainerLaunchContext amContainer=Records.newRecord(ContainerLaunchContext.class);
+  appContext.setAMContainerSpec(amContainer);
+  appContext.setUnmanagedAM(true);
+  SubmitApplicationRequest appRequest=Records.newRecord(SubmitApplicationRequest.class);
+  appRequest.setApplicationSubmissionContext(appContext);
+  yarnClient.submitApplication(appContext);
+  int iterationsLeft=30;
+  RMAppAttempt appAttempt=null;
+  while (iterationsLeft > 0) {
+    ApplicationReport appReport=yarnClient.getApplicationReport(appId);
+    if (appReport.getYarnApplicationState() == YarnApplicationState.ACCEPTED) {
+      attemptId=appReport.getCurrentApplicationAttemptId();
+      appAttempt=yarnCluster.getResourceManager().getRMContext().getRMApps().get(attemptId.getApplicationId()).getCurrentAppAttempt();
+      while (true) {
+        if (appAttempt.getAppAttemptState() == RMAppAttemptState.LAUNCHED) {
+          break;
+        }
+      }
+      break;
+    }
+    sleep(1000);
+    --iterationsLeft;
+  }
+  if (iterationsLeft == 0) {
+    fail("Application hasn't bee started");
+  }
+  UserGroupInformation.setLoginUser(UserGroupInformation.createRemoteUser(UserGroupInformation.getCurrentUser().getUserName()));
+  UserGroupInformation.getCurrentUser().addToken(appAttempt.getAMRMToken());
+  rmClient=(AMRMClientImpl<ContainerRequest>)AMRMClient.<ContainerRequest>createAMRMClient(attemptId);
+  rmClient.init(conf);
+  rmClient.start();
+  assertNotNull(rmClient);
+  assertEquals(STATE.STARTED,rmClient.getServiceState());
+  nmClient=(NMClientImpl)NMClient.createNMClient();
+  nmClient.init(conf);
+  nmClient.start();
+  assertNotNull(nmClient);
+  assertEquals(STATE.STARTED,nmClient.getServiceState());
+}

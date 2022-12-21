@@ -1,0 +1,7 @@
+@Override public boolean onMove(RecyclerView recyclerView,RecyclerView.ViewHolder viewHolder,RecyclerView.ViewHolder target){
+  adapter.notifyItemMoved(viewHolder.getAdapterPosition(),target.getAdapterPosition());
+  adapter.notifyItemChanged(viewHolder.getAdapterPosition());
+  adapter.notifyItemChanged(target.getAdapterPosition());
+  Collections.swap(adapter.getBookSourceBeanList(),viewHolder.getAdapterPosition(),target.getAdapterPosition());
+  return true;
+}

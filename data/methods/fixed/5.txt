@@ -1,0 +1,3 @@
+public boolean isIdle(){
+  return tcp.writeBuffer.position() / (float)tcp.writeBuffer.capacity() < tcp.idleThreshold;
+}

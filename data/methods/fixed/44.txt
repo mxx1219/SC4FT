@@ -1,0 +1,10 @@
+private void init(){
+  LayoutInflater inflater=(LayoutInflater)mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+  inflater.inflate(R.layout.emotion_layout,this);
+  mVpEmotioin=(ViewPagerFixed)findViewById(R.id.vpEmotioin);
+  mLlPageNumber=(LinearLayout)findViewById(R.id.llPageNumber);
+  mLlTabContainer=(LinearLayout)findViewById(R.id.llTabContainer);
+  mRlEmotionAdd=(RelativeLayout)findViewById(R.id.rlEmotionAdd);
+  setEmotionAddVisiable(mEmotionAddVisiable);
+  initTabs();
+}

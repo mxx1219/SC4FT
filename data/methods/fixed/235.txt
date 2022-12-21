@@ -1,0 +1,8 @@
+@AfterClass public void tearDown() throws Exception {
+  try {
+    testFactoryWithRootFolder.delete();
+  }
+ catch (  org.eclipse.che.api.core.NotFoundException ex) {
+    fail("https://github.com/eclipse/che/issues/8667");
+  }
+}

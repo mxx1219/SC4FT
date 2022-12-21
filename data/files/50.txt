@@ -1,0 +1,10 @@
+package tenor;
+public interface IQuantizedChildTaskRelationship<T extends ITaskNodeBase> extends ITaskRelationshipBase<T,IQuantizedTask> {
+  double allocatedPriority(  int quantity);
+  default boolean childProvidesClaimTo(  int quantity){
+    return quantityCompleted() >= quantity;
+  }
+  default int quantityCompleted(){
+    return ((ClaimProvider)childTask()).quantityCompletedForParent(this);
+  }
+}

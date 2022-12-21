@@ -1,0 +1,23 @@
+private void fade(final View v,boolean fadeIn){
+  int anim=R.animator.fade_out_support;
+  int visibilityTemp=View.GONE;
+  if (fadeIn) {
+    anim=R.animator.fade_in_support;
+    visibilityTemp=View.VISIBLE;
+  }
+  final int visibility=visibilityTemp;
+  if (getActivity() != null) {
+    Animation mAnimation=AnimationUtils.loadAnimation(getActivity(),anim);
+    mAnimation.setAnimationListener(new AnimationListener(){
+      @Override public void onAnimationStart(      Animation animation){
+      }
+      @Override public void onAnimationRepeat(      Animation animation){
+      }
+      @Override public void onAnimationEnd(      Animation animation){
+        v.setVisibility(visibility);
+      }
+    }
+);
+    v.startAnimation(mAnimation);
+  }
+}

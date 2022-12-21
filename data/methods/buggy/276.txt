@@ -1,0 +1,20 @@
+protected WebView(Context context,AttributeSet attrs,int defStyle,Map<String,Object> javaScriptInterfaces,boolean privateBrowsing){
+  super(context,attrs,defStyle);
+  checkThread();
+  JniUtil.setContext(context);
+  mCallbackProxy=new CallbackProxy(context,this);
+  mViewManager=new ViewManager(this);
+  L10nUtils.setApplicationContext(context.getApplicationContext());
+  mWebViewCore=new WebViewCore(context,this,mCallbackProxy,javaScriptInterfaces);
+  mDatabase=WebViewDatabase.getInstance(context);
+  mScroller=new OverScroller(context,null,0,0,false);
+  mZoomManager=new ZoomManager(this,mCallbackProxy);
+  init();
+  setupPackageListener(context);
+  setupProxyListener(context);
+  updateMultiTouchSupport(context);
+  if (privateBrowsing) {
+    startPrivateBrowsing();
+  }
+  mAutoFillData=new WebViewCore.AutoFillData();
+}

@@ -1,0 +1,11 @@
+@Override public Object fromJSON(Map object){
+  Object obj=null;
+  try {
+    obj=_pojoClass.getDeclaredConstructor().newInstance();
+  }
+ catch (  Exception e) {
+    throw new RuntimeException(e);
+  }
+  setProps(obj,object);
+  return obj;
+}

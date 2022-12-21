@@ -1,0 +1,2 @@
+@Override protected AbstractNonNamespacedResourceOperator<KubernetesClient,ClusterRole,ClusterRoleList,DoneableClusterRole,Resource<ClusterRole,DoneableClusterRole>> operator(){
+}

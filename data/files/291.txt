@@ -1,0 +1,127 @@
+package fj.data;
+import fj.*;
+import fj.Function.compose;
+import fj.Function.curry;
+import fj.P.p;
+import fj.data.Option.none;
+import fj.data.Option.some;
+import fj.data.Stream.join;
+import fj.function.Booleans.or;
+import fj.function.Characters.isSpaceChar;
+import fj.Equal.charEqual;
+import fj.Equal.streamEqual;
+import java.util.regex.Pattern;
+public final class LazyString implements CharSequence {
+  private final Stream<Character> s;
+  private LazyString(  final Stream<Character> s){
+    this.s=s;
+  }
+  public static LazyString str(  final String s){
+    return new LazyString(Stream.unfold(null,p(s,0)));
+  }
+  public static final LazyString empty=str("");
+  public static LazyString fromStream(  final Stream<Character> s){
+    return new LazyString(s);
+  }
+  public Stream<Character> toStream(){
+    return s;
+  }
+  public int length(){
+    return s.length();
+  }
+  public char charAt(  final int index){
+    return s.index(index);
+  }
+  public CharSequence subSequence(  final int start,  final int end){
+    return fromStream(s.drop(start).take(end - start));
+  }
+  public String toStringEager(){
+    final StringBuilder builder=new StringBuilder(length() + 16);
+    s.foreachDoEffect(null);
+    return builder.toString();
+  }
+  public String toStringLazy(){
+    return s.isEmpty() ? "" : "LazyString(" + Show.charShow.showS(s.head()) + ", ?)";
+  }
+  @Override public String toString(){
+    return toStringLazy();
+  }
+  public String eval(){
+    return toStringEager();
+  }
+  public LazyString append(  final LazyString cs){
+    return fromStream(s.append(cs.s));
+  }
+  public LazyString append(  final String s){
+    return append(str(s));
+  }
+  public boolean contains(  final LazyString cs){
+    return or(s.tails().map(compose(startsWith().f(cs),fromStream)));
+  }
+  public boolean endsWith(  final LazyString cs){
+    return reverse().startsWith(cs.reverse());
+  }
+  public boolean startsWith(  final LazyString cs){
+    return cs.isEmpty() || !isEmpty() && charEqual.eq(head(),cs.head()) && tail().startsWith(cs.tail());
+  }
+  public static F<LazyString,F<LazyString,Boolean>> startsWith(){
+    return curry(null);
+  }
+  public char head(){
+    return s.head();
+  }
+  public LazyString tail(){
+    return fromStream(s.tail()._1());
+  }
+  public boolean isEmpty(){
+    return s.isEmpty();
+  }
+  public LazyString reverse(){
+    return fromStream(s.reverse());
+  }
+  public Option<Integer> indexOf(  final char c){
+    return s.indexOf(charEqual.eq(c));
+  }
+  public Option<Integer> indexOf(  final LazyString cs){
+    return s.substreams().indexOf(eqS.eq(cs.s));
+  }
+  public boolean matches(  final String regex){
+    return Pattern.matches(regex,this);
+  }
+  public Stream<LazyString> split(  final F<Character,Boolean> p){
+    final Stream<Character> findIt=s.dropWhile(p);
+    final P2<Stream<Character>,Stream<Character>> ws=findIt.split(p);
+    return findIt.isEmpty() ? Stream.<LazyString>nil() : Stream.cons(fromStream(ws._1()),null);
+  }
+  public LazyString map(  F<Character,Character> f){
+    return fromStream(s.map(f));
+  }
+  public LazyString bind(  F<Character,LazyString> f){
+    return fromStream(s.bind(null));
+  }
+  public Stream<LazyString> split(  final char c){
+    return split(charEqual.eq(c));
+  }
+  public Stream<LazyString> words(){
+    return split(isSpaceChar);
+  }
+  public Stream<LazyString> lines(){
+    return split('\n');
+  }
+  public static F<LazyString,Stream<LazyString>> lines_(){
+    return null;
+  }
+  public static LazyString unlines(  final Stream<LazyString> str){
+    return fromStream(join(str.intersperse(str("\n")).map(toStream)));
+  }
+  public static F<Stream<LazyString>,LazyString> unlines_(){
+    return null;
+  }
+  public static LazyString unwords(  final Stream<LazyString> str){
+    return fromStream(join(str.intersperse(str(" ")).map(toStream)));
+  }
+  public static final F<LazyString,Stream<Character>> toStream=null;
+  public static final F<LazyString,String> toString=null;
+  public static final F<Stream<Character>,LazyString> fromStream=null;
+  private static final Equal<Stream<Character>> eqS=streamEqual(charEqual);
+}

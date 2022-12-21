@@ -1,0 +1,4 @@
+@Override public void handle(Signal signal){
+  LOG.error("RECEIVED SIGNAL " + signal.getNumber() + ": SIG"+ signal.getName());
+  prevHandler.handle(signal);
+}

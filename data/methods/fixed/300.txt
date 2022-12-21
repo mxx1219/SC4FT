@@ -1,0 +1,26 @@
+private boolean isNominalization(int i,AnalyzedTokenReadings[] tokens,String token,AnalyzedTokenReadings lowercaseReadings){
+  AnalyzedTokenReadings nextReadings=i < tokens.length - 1 ? tokens[i + 1] : null;
+  if (StringTools.startsWithUppercase(token) && !isNumber(token) && !hasNounReading(nextReadings)&& !token.matches("Alle[nm]")) {
+    if (lowercaseReadings != null && lowercaseReadings.hasPosTag("PRP:LOK+TMP+CAU:DAT+AKK")) {
+      return false;
+    }
+    AnalyzedTokenReadings prevToken=i > 0 ? tokens[i - 1] : null;
+    AnalyzedTokenReadings prevPrevToken=i >= 2 ? tokens[i - 2] : null;
+    AnalyzedTokenReadings prevPrevPrevToken=i >= 3 ? tokens[i - 3] : null;
+    String prevTokenStr=prevToken != null ? prevToken.getToken() : "";
+    if (prevToken != null && ("und".equals(prevTokenStr) || "oder".equals(prevTokenStr) || "beziehungsweise".equals(prevTokenStr))) {
+      if (prevPrevToken != null) {
+        if (tokens[i].hasPartialPosTag("SUB") && tokens[i].hasPartialPosTag(":ADJ")) {
+          return true;
+        }
+ else         if (prevPrevToken.hasPartialPosTag("SUB") && !hasNounReading(nextReadings)) {
+          if (lowercaseReadings != null && lowercaseReadings.hasPartialPosTag("ADJ")) {
+            return true;
+          }
+        }
+      }
+    }
+    return (prevToken != null && ("irgendwas".equals(prevTokenStr) || "aufs".equals(prevTokenStr) || isNumber(prevTokenStr))) || (hasPartialTag(prevToken,"ART","PRO:") && !((prevToken.getReadings().size() == 1 || prevPrevToken.hasLemma("sein")) && prevToken.hasPartialPosTag("PRO:PER:NOM:")) && !prevToken.hasPartialPosTag(":STD")) || (hasPartialTag(prevPrevPrevToken,"ART") && hasPartialTag(prevPrevToken,"PRP") && hasPartialTag(prevToken,"SUB"))|| (hasPartialTag(prevPrevToken,"PRO:","PRP") && hasPartialTag(prevToken,"ADJ","ADV","PA2","PA1"))|| (hasPartialTag(prevPrevPrevToken,"PRO:","PRP") && hasPartialTag(prevPrevToken,"ADJ","ADV") && hasPartialTag(prevToken,"ADJ","ADV","PA2"));
+  }
+  return false;
+}

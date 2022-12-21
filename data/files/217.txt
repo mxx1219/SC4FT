@@ -1,0 +1,170 @@
+package com.google.common.hash;
+import com.google.common.base.Preconditions.checkArgument;
+import com.google.common.base.Preconditions.checkNotNull;
+import com.google.common.annotations.Beta;
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Objects;
+import com.google.common.base.Predicate;
+import com.google.common.hash.BloomFilterStrategies.BitArray;
+import com.google.common.primitives.SignedBytes;
+import com.google.common.primitives.UnsignedBytes;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.Serializable;
+import javax.annotation.Nullable;
+@Beta public final class BloomFilter<T> implements Predicate<T>, Serializable {
+interface Strategy extends java.io.Serializable {
+    <T>boolean put(    T object,    Funnel<? super T> funnel,    int numHashFunctions,    BitArray bits);
+    <T>boolean mightContain(    T object,    Funnel<? super T> funnel,    int numHashFunctions,    BitArray bits);
+    int ordinal();
+  }
+  private final BitArray bits;
+  private final int numHashFunctions;
+  private final Funnel<T> funnel;
+  private final Strategy strategy;
+  private BloomFilter(  BitArray bits,  int numHashFunctions,  Funnel<T> funnel,  Strategy strategy){
+    checkArgument(numHashFunctions > 0,"numHashFunctions (%s) must be > 0",numHashFunctions);
+    checkArgument(numHashFunctions <= 255,"numHashFunctions (%s) must be <= 255",numHashFunctions);
+    this.bits=checkNotNull(bits);
+    this.numHashFunctions=numHashFunctions;
+    this.funnel=checkNotNull(funnel);
+    this.strategy=checkNotNull(strategy);
+  }
+  public BloomFilter<T> copy(){
+    return new BloomFilter<T>(bits.copy(),numHashFunctions,funnel,strategy);
+  }
+  public boolean mightContain(  T object){
+    return strategy.mightContain(object,funnel,numHashFunctions,bits);
+  }
+  @Deprecated @Override public boolean apply(  T input){
+    return mightContain(input);
+  }
+  public boolean put(  T object){
+    return strategy.put(object,funnel,numHashFunctions,bits);
+  }
+  public double expectedFpp(){
+    return Math.pow((double)bits.bitCount() / bitSize(),numHashFunctions);
+  }
+  @VisibleForTesting long bitSize(){
+    return bits.bitSize();
+  }
+  public boolean isCompatible(  BloomFilter<T> that){
+    checkNotNull(that);
+    return (this != that) && (this.numHashFunctions == that.numHashFunctions) && (this.bitSize() == that.bitSize())&& (this.strategy.equals(that.strategy))&& (this.funnel.equals(that.funnel));
+  }
+  public void putAll(  BloomFilter<T> that){
+    checkNotNull(that);
+    checkArgument(this != that,"Cannot combine a BloomFilter with itself.");
+    checkArgument(this.numHashFunctions == that.numHashFunctions,"BloomFilters must have the same number of hash functions (%s != %s)",this.numHashFunctions,that.numHashFunctions);
+    checkArgument(this.bitSize() == that.bitSize(),"BloomFilters must have the same size underlying bit arrays (%s != %s)",this.bitSize(),that.bitSize());
+    checkArgument(this.strategy.equals(that.strategy),"BloomFilters must have equal strategies (%s != %s)",this.strategy,that.strategy);
+    checkArgument(this.funnel.equals(that.funnel),"BloomFilters must have equal funnels (%s != %s)",this.funnel,that.funnel);
+    this.bits.putAll(that.bits);
+  }
+  @Override public boolean equals(  @Nullable Object object){
+    if (object == this) {
+      return true;
+    }
+    if (object instanceof BloomFilter) {
+      BloomFilter<?> that=(BloomFilter<?>)object;
+      return this.numHashFunctions == that.numHashFunctions && this.funnel.equals(that.funnel) && this.bits.equals(that.bits) && this.strategy.equals(that.strategy);
+    }
+    return false;
+  }
+  @Override public int hashCode(){
+    return Objects.hashCode(numHashFunctions,funnel,strategy,bits);
+  }
+  private static final Strategy DEFAULT_STRATEGY=getDefaultStrategyFromSystemProperty();
+  @VisibleForTesting static final String USE_MITZ32_PROPERTY="com.google.common.hash.BloomFilter.useMitz32";
+  @VisibleForTesting static Strategy getDefaultStrategyFromSystemProperty(){
+    return Boolean.parseBoolean(System.getProperty(USE_MITZ32_PROPERTY)) ? BloomFilterStrategies.MURMUR128_MITZ_32 : BloomFilterStrategies.MURMUR128_MITZ_64;
+  }
+  public static <T>BloomFilter<T> create(  Funnel<T> funnel,  int expectedInsertions,  double fpp){
+    return create(funnel,expectedInsertions,fpp,DEFAULT_STRATEGY);
+  }
+  @VisibleForTesting static <T>BloomFilter<T> create(  Funnel<T> funnel,  int expectedInsertions,  double fpp,  Strategy strategy){
+    checkNotNull(funnel);
+    checkArgument(expectedInsertions >= 0,"Expected insertions (%s) must be >= 0",expectedInsertions);
+    checkArgument(fpp > 0.0,"False positive probability (%s) must be > 0.0",fpp);
+    checkArgument(fpp < 1.0,"False positive probability (%s) must be < 1.0",fpp);
+    checkNotNull(strategy);
+    if (expectedInsertions == 0) {
+      expectedInsertions=1;
+    }
+    long numBits=optimalNumOfBits(expectedInsertions,fpp);
+    int numHashFunctions=optimalNumOfHashFunctions(expectedInsertions,numBits);
+    try {
+      return new BloomFilter<T>(new BitArray(numBits),numHashFunctions,funnel,strategy);
+    }
+ catch (    IllegalArgumentException e) {
+      throw new IllegalArgumentException("Could not create BloomFilter of " + numBits + " bits",e);
+    }
+  }
+  public static <T>BloomFilter<T> create(  Funnel<T> funnel,  int expectedInsertions){
+    return create(funnel,expectedInsertions,0.03);
+  }
+  @VisibleForTesting static int optimalNumOfHashFunctions(  long n,  long m){
+    return Math.max(1,(int)Math.round(m / n * Math.log(2)));
+  }
+  @VisibleForTesting static long optimalNumOfBits(  long n,  double p){
+    if (p == 0) {
+      p=Double.MIN_VALUE;
+    }
+    return (long)(-n * Math.log(p) / (Math.log(2) * Math.log(2)));
+  }
+  private Object writeReplace(){
+    return new SerialForm<T>(this);
+  }
+private static class SerialForm<T> implements Serializable {
+    final long[] data;
+    final int numHashFunctions;
+    final Funnel<T> funnel;
+    final Strategy strategy;
+    SerialForm(    BloomFilter<T> bf){
+      this.data=bf.bits.data;
+      this.numHashFunctions=bf.numHashFunctions;
+      this.funnel=bf.funnel;
+      this.strategy=bf.strategy;
+    }
+    Object readResolve(){
+      return new BloomFilter<T>(new BitArray(data),numHashFunctions,funnel,strategy);
+    }
+    private static final long serialVersionUID=1;
+  }
+  public void writeTo(  OutputStream out) throws IOException {
+    DataOutputStream dout=new DataOutputStream(out);
+    dout.writeByte(SignedBytes.checkedCast(strategy.ordinal()));
+    dout.writeByte(UnsignedBytes.checkedCast(numHashFunctions));
+    dout.writeInt(bits.data.length);
+    for (    long value : bits.data) {
+      dout.writeLong(value);
+    }
+  }
+  public static <T>BloomFilter<T> readFrom(  InputStream in,  Funnel<T> funnel) throws IOException {
+    checkNotNull(in,"InputStream");
+    checkNotNull(funnel,"Funnel");
+    int strategyOrdinal=-1;
+    int numHashFunctions=-1;
+    int dataLength=-1;
+    try {
+      DataInputStream din=new DataInputStream(in);
+      strategyOrdinal=din.readByte();
+      numHashFunctions=UnsignedBytes.toInt(din.readByte());
+      dataLength=din.readInt();
+      Strategy strategy=BloomFilterStrategies.values()[strategyOrdinal];
+      long[] data=new long[dataLength];
+      for (int i=0; i < data.length; i++) {
+        data[i]=din.readLong();
+      }
+      return new BloomFilter<T>(new BitArray(data),numHashFunctions,funnel,strategy);
+    }
+ catch (    RuntimeException e) {
+      IOException ioException=new IOException("Unable to deserialize BloomFilter from InputStream." + " strategyOrdinal: " + strategyOrdinal + " numHashFunctions: "+ numHashFunctions+ " dataLength: "+ dataLength);
+      ioException.initCause(e);
+      throw ioException;
+    }
+  }
+}

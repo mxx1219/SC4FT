@@ -1,0 +1,10 @@
+public static Bitmap drawableToBitmap(Drawable drawable,boolean lowQualityImage){
+  if (drawable == null || drawable.getIntrinsicWidth() == 0 || drawable.getIntrinsicHeight() == 0) {
+    return null;
+  }
+  drawable.setBounds(0,0,drawable.getIntrinsicWidth(),drawable.getIntrinsicHeight());
+  Bitmap bitmap=Bitmap.createBitmap(drawable.getIntrinsicWidth(),drawable.getIntrinsicHeight(),lowQualityImage ? Bitmap.Config.ARGB_4444 : Bitmap.Config.ARGB_8888);
+  Canvas canvas=new Canvas(bitmap);
+  drawable.draw(canvas);
+  return bitmap;
+}

@@ -1,0 +1,3 @@
+@Override public long hash(Block block,int position){
+  return unpackMillisUtc(block.getLong(position,0));
+}

@@ -1,0 +1,75 @@
+int[] performReorder(int pixelX,int pixelY,int minSpanX,int minSpanY,int spanX,int spanY,View dragView,int[] result,int resultSpan[],int mode){
+  result=findNearestArea(pixelX,pixelY,spanX,spanY,result);
+  if (resultSpan == null) {
+    resultSpan=new int[2];
+  }
+  if ((mode == MODE_ON_DROP || mode == MODE_ON_DROP_EXTERNAL || mode == MODE_ACCEPT_DROP) && mPreviousReorderDirection[0] != INVALID_DIRECTION) {
+    mDirectionVector[0]=mPreviousReorderDirection[0];
+    mDirectionVector[1]=mPreviousReorderDirection[1];
+    if (mode == MODE_ON_DROP || mode == MODE_ON_DROP_EXTERNAL) {
+      mPreviousReorderDirection[0]=INVALID_DIRECTION;
+      mPreviousReorderDirection[1]=INVALID_DIRECTION;
+    }
+  }
+ else {
+    getDirectionVectorForDrop(pixelX,pixelY,spanX,spanY,dragView,mDirectionVector);
+    mPreviousReorderDirection[0]=mDirectionVector[0];
+    mPreviousReorderDirection[1]=mDirectionVector[1];
+  }
+  ItemConfiguration swapSolution=findReorderSolution(pixelX,pixelY,minSpanX,minSpanY,spanX,spanY,mDirectionVector,dragView,true,new ItemConfiguration());
+  ItemConfiguration noShuffleSolution=findConfigurationNoShuffle(pixelX,pixelY,minSpanX,minSpanY,spanX,spanY,dragView,new ItemConfiguration());
+  ItemConfiguration finalSolution=null;
+  if (swapSolution.isSolution && swapSolution.area() >= noShuffleSolution.area()) {
+    finalSolution=swapSolution;
+  }
+ else   if (noShuffleSolution.isSolution) {
+    finalSolution=noShuffleSolution;
+  }
+  if (mode == MODE_SHOW_REORDER_HINT) {
+    if (finalSolution != null) {
+      beginOrAdjustReorderPreviewAnimations(finalSolution,dragView,0,ReorderPreviewAnimation.MODE_HINT);
+      result[0]=finalSolution.dragViewX;
+      result[1]=finalSolution.dragViewY;
+      resultSpan[0]=finalSolution.dragViewSpanX;
+      resultSpan[1]=finalSolution.dragViewSpanY;
+    }
+ else {
+      result[0]=result[1]=resultSpan[0]=resultSpan[1]=-1;
+    }
+    return result;
+  }
+  boolean foundSolution=true;
+  if (!DESTRUCTIVE_REORDER) {
+    setUseTempCoords(true);
+  }
+  if (finalSolution != null) {
+    result[0]=finalSolution.dragViewX;
+    result[1]=finalSolution.dragViewY;
+    resultSpan[0]=finalSolution.dragViewSpanX;
+    resultSpan[1]=finalSolution.dragViewSpanY;
+    if (mode == MODE_DRAG_OVER || mode == MODE_ON_DROP || mode == MODE_ON_DROP_EXTERNAL) {
+      if (!DESTRUCTIVE_REORDER) {
+        copySolutionToTempState(finalSolution,dragView);
+      }
+      setItemPlacementDirty(true);
+      animateItemsToSolution(finalSolution,dragView,mode == MODE_ON_DROP);
+      if (!DESTRUCTIVE_REORDER && (mode == MODE_ON_DROP || mode == MODE_ON_DROP_EXTERNAL)) {
+        commitTempPlacement();
+        completeAndClearReorderPreviewAnimations();
+        setItemPlacementDirty(false);
+      }
+ else {
+        beginOrAdjustReorderPreviewAnimations(finalSolution,dragView,REORDER_ANIMATION_DURATION,ReorderPreviewAnimation.MODE_PREVIEW);
+      }
+    }
+  }
+ else {
+    foundSolution=false;
+    result[0]=result[1]=resultSpan[0]=resultSpan[1]=-1;
+  }
+  if ((mode == MODE_ON_DROP || !foundSolution) && !DESTRUCTIVE_REORDER) {
+    setUseTempCoords(false);
+  }
+  mShortcutsAndWidgets.requestLayout();
+  return result;
+}

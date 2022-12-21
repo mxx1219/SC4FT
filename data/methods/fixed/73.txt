@@ -1,0 +1,41 @@
+Instance seek(){
+  while (pointer[0] < allInstanceDumpBounds.endOffset) {
+    long start=pointer[0];
+    int classIdOffset=0;
+    long instanceClassId=0L;
+    int tag=heap.readDumpTag(pointer);
+    int idSize=dumpBuffer.getIDSize();
+    if (tag == HprofHeap.INSTANCE_DUMP) {
+      classIdOffset=idSize + 4;
+    }
+ else     if (tag == HprofHeap.OBJECT_ARRAY_DUMP) {
+      classIdOffset=idSize + 4 + 4;
+    }
+ else     if (tag == HprofHeap.PRIMITIVE_ARRAY_DUMP) {
+      byte type=dumpBuffer.get(start + 1 + idSize+ 4+ 4);
+      instanceClassId=heap.getClassDumpSegment().getPrimitiveArrayClass(type).getJavaClassId();
+    }
+    if (classIdOffset != 0) {
+      instanceClassId=dumpBuffer.getID(start + 1 + classIdOffset);
+    }
+    ClassDump jc=(ClassDump)heap.getJavaClassByID(instanceClassId);
+    if (jc == null) {
+      continue;
+    }
+    Instance instance=null;
+    if (tag == HprofHeap.INSTANCE_DUMP) {
+      instance=new InstanceDump(jc,start);
+    }
+ else     if (tag == HprofHeap.OBJECT_ARRAY_DUMP) {
+      instance=new ObjectArrayDump(jc,start);
+    }
+ else     if (tag == HprofHeap.PRIMITIVE_ARRAY_DUMP) {
+      instance=new PrimitiveArrayDump(jc,start);
+    }
+ else {
+      continue;
+    }
+    return instance;
+  }
+  return null;
+}

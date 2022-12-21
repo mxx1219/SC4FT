@@ -1,0 +1,32 @@
+@Override public Map<String,Processor.Factory> getProcessors(Processor.Parameters parameters){
+  Map<String,Processor.Factory> processors=new HashMap<>();
+  processors.put(DateProcessor.TYPE,new DateProcessor.Factory(parameters.scriptService));
+  processors.put(SetProcessor.TYPE,new SetProcessor.Factory(parameters.scriptService));
+  processors.put(AppendProcessor.TYPE,new AppendProcessor.Factory(parameters.scriptService));
+  processors.put(RenameProcessor.TYPE,new RenameProcessor.Factory(parameters.scriptService));
+  processors.put(RemoveProcessor.TYPE,new RemoveProcessor.Factory(parameters.scriptService));
+  processors.put(SplitProcessor.TYPE,new SplitProcessor.Factory());
+  processors.put(JoinProcessor.TYPE,new JoinProcessor.Factory());
+  processors.put(UppercaseProcessor.TYPE,new UppercaseProcessor.Factory());
+  processors.put(LowercaseProcessor.TYPE,new LowercaseProcessor.Factory());
+  processors.put(TrimProcessor.TYPE,new TrimProcessor.Factory());
+  processors.put(ConvertProcessor.TYPE,new ConvertProcessor.Factory());
+  processors.put(GsubProcessor.TYPE,new GsubProcessor.Factory());
+  processors.put(FailProcessor.TYPE,new FailProcessor.Factory(parameters.scriptService));
+  processors.put(ForEachProcessor.TYPE,new ForEachProcessor.Factory(parameters.scriptService,parameters.genericExecutor));
+  processors.put(DateIndexNameProcessor.TYPE,new DateIndexNameProcessor.Factory(parameters.scriptService));
+  processors.put(SortProcessor.TYPE,new SortProcessor.Factory());
+  processors.put(GrokProcessor.TYPE,new GrokProcessor.Factory(GROK_PATTERNS,createGrokThreadWatchdog(parameters)));
+  processors.put(ScriptProcessor.TYPE,new ScriptProcessor.Factory(parameters.scriptService));
+  processors.put(DotExpanderProcessor.TYPE,new DotExpanderProcessor.Factory());
+  processors.put(JsonProcessor.TYPE,new JsonProcessor.Factory());
+  processors.put(KeyValueProcessor.TYPE,new KeyValueProcessor.Factory());
+  processors.put(URLDecodeProcessor.TYPE,new URLDecodeProcessor.Factory());
+  processors.put(BytesProcessor.TYPE,new BytesProcessor.Factory());
+  processors.put(PipelineProcessor.TYPE,new PipelineProcessor.Factory(parameters.ingestService));
+  processors.put(DissectProcessor.TYPE,new DissectProcessor.Factory());
+  processors.put(DropProcessor.TYPE,new DropProcessor.Factory());
+  processors.put(HtmlStripProcessor.TYPE,new HtmlStripProcessor.Factory());
+  processors.put(CsvProcessor.TYPE,new CsvProcessor.Factory());
+  return Collections.unmodifiableMap(processors);
+}

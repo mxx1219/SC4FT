@@ -1,0 +1,8 @@
+@Override protected Object readInternal(Class<?> clazz,HttpInputMessage inputMessage) throws IOException, HttpMessageNotReadableException {
+  String value=this.stringHttpMessageConverter.readInternal(String.class,inputMessage);
+  Object result=this.conversionService.convert(value,clazz);
+  if (result == null) {
+    throw new HttpMessageNotReadableException("Unexpected null conversion result for '" + value + "' to "+ clazz);
+  }
+  return result;
+}

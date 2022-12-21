@@ -1,0 +1,28 @@
+@SuppressWarnings({"unchecked","rawtypes"}) protected void invokeListener(ApplicationListener listener,ApplicationEvent event){
+  ErrorHandler errorHandler=getErrorHandler();
+  if (errorHandler != null) {
+    try {
+      listener.onApplicationEvent(event);
+    }
+ catch (    Throwable err) {
+      errorHandler.handleError(err);
+    }
+  }
+ else {
+    try {
+      listener.onApplicationEvent(event);
+    }
+ catch (    ClassCastException ex) {
+      String msg=ex.getMessage();
+      if (msg != null && msg.startsWith(event.getClass().getName())) {
+        Log logger=LogFactory.getLog(getClass());
+        if (logger.isDebugEnabled()) {
+          logger.debug("Non-matching event type for listener: " + listener,ex);
+        }
+      }
+ else {
+        throw ex;
+      }
+    }
+  }
+}

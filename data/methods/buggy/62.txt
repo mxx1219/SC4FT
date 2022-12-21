@@ -1,0 +1,3 @@
+public static Array<Mission> getMissions(){
+  return Array.with(new ItemMission(Items.copper,10).setMessage("An updated tutorial will return next build.\nFor now, you'll have to deal with... this."),new BlockMission(ProductionBlocks.mechanicalDrill),new ItemMission(Items.copper,100),new ItemMission(Items.lead,50),new BlockMission(CraftingBlocks.smelter),new ItemMission(Items.densealloy,10),new WaveMission(5));
+}

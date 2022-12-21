@@ -1,0 +1,13 @@
+@Override public TestNetworkManager createService(Context context) throws ServiceNotFoundException {
+  IBinder csBinder=ServiceManager.getServiceOrThrow(Context.CONNECTIVITY_SERVICE);
+  IConnectivityManager csMgr=IConnectivityManager.Stub.asInterface(csBinder);
+  final IBinder tnBinder;
+  try {
+    tnBinder=csMgr.startOrGetTestNetworkService();
+  }
+ catch (  RemoteException e) {
+    throw new ServiceNotFoundException(Context.TEST_NETWORK_SERVICE);
+  }
+  ITestNetworkManager tnMgr=ITestNetworkManager.Stub.asInterface(tnBinder);
+  return new TestNetworkManager(context,tnMgr);
+}

@@ -1,0 +1,3 @@
+public Object[] getRecordComponents(Class<?> type){
+  return new Object[0];
+}

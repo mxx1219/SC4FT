@@ -1,0 +1,16 @@
+@Override public void channelDisconnected(ChannelHandlerContext ctx,ChannelStateEvent e) throws Exception {
+  final Channel channel=e.getChannel();
+  final ChannelContext channelContext=getChannelContext(channel);
+  PinpointServerSocketStateCode currentStateCode=channelContext.getCurrentStateCode();
+  if (currentStateCode == PinpointServerSocketStateCode.BEING_SHUTDOWN) {
+    channelContext.changeStateShutdown();
+  }
+ else {
+    channelContext.changeStateUnexpectedShutdown();
+  }
+  if (logger.isDebugEnabled()) {
+    logger.debug("server channelDisconnected {}",channel);
+  }
+  this.channelGroup.remove(channel);
+  super.channelDisconnected(ctx,e);
+}

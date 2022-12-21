@@ -1,0 +1,61 @@
+package hudson.tasks;
+import hudson.AbortException;
+import hudson.FilePath;
+import hudson.model.Build;
+import hudson.model.BuildListener;
+import hudson.model.Action;
+import hudson.model.Project;
+import hudson.model.AbstractBuild;
+import hudson.model.AbstractProject;
+import hudson.Launcher;
+import hudson.Util;
+import java.io.IOException;
+import java.util.Collection;
+import java.util.Collections;
+import hudson.model.Run;
+import hudson.model.TaskListener;
+import jenkins.tasks.SimpleBuildStep;
+import javax.annotation.Nonnull;
+@Deprecated public abstract class BuildStepCompatibilityLayer implements BuildStep {
+  public boolean prebuild(  AbstractBuild<?,?> build,  BuildListener listener){
+    if (build instanceof Build)     return prebuild((Build)build,listener);
+ else     return true;
+  }
+  @Override public boolean perform(  AbstractBuild<?,?> build,  Launcher launcher,  BuildListener listener) throws InterruptedException, IOException {
+    if (this instanceof SimpleBuildStep) {
+      FilePath workspace=build.getWorkspace();
+      if (workspace == null) {
+        throw new AbortException("no workspace for " + build);
+      }
+      ((SimpleBuildStep)this).perform(build,workspace,launcher,listener);
+      return true;
+    }
+ else     if (build instanceof Build) {
+      return perform((Build)build,launcher,listener);
+    }
+ else {
+      return true;
+    }
+  }
+  public Action getProjectAction(  AbstractProject<?,?> project){
+    if (project instanceof Project)     return getProjectAction((Project)project);
+ else     return null;
+  }
+  @Nonnull public Collection<? extends Action> getProjectActions(  AbstractProject<?,?> project){
+    Action a=getProjectAction(project);
+    if (a == null)     return Collections.emptyList();
+    return Collections.singletonList(a);
+  }
+  @Deprecated public boolean prebuild(  Build<?,?> build,  BuildListener listener){
+    return true;
+  }
+  @Deprecated public boolean perform(  Build<?,?> build,  Launcher launcher,  BuildListener listener) throws InterruptedException, IOException {
+    if (build instanceof AbstractBuild && Util.isOverridden(BuildStepCompatibilityLayer.class,this.getClass(),"perform",AbstractBuild.class,Launcher.class,BuildListener.class)) {
+      return perform((AbstractBuild<?,?>)build,launcher,listener);
+    }
+    throw new AbstractMethodError();
+  }
+  @Deprecated public Action getProjectAction(  Project<?,?> project){
+    return null;
+  }
+}

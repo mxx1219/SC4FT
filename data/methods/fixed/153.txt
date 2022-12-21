@@ -1,0 +1,16 @@
+@Test public void testZeroRequested(){
+  ConnectableFlowable<Integer> source=Flowable.just(1).publish();
+  TestSubscriber<Integer> ts=new TestSubscriber<Integer>(0L);
+  source.subscribe(ts);
+  ts.assertNoValues();
+  ts.assertNoErrors();
+  ts.assertNotComplete();
+  source.connect();
+  ts.assertNoValues();
+  ts.assertNoErrors();
+  ts.assertNotComplete();
+  ts.request(5);
+  ts.assertValue(1);
+  ts.assertNoErrors();
+  ts.assertTerminated();
+}

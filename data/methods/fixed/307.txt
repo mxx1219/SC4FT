@@ -1,0 +1,10 @@
+@Override protected synchronized void startInternal() throws LifecycleException {
+  Container c=getContainer();
+  while (c != null && !(c instanceof Engine)) {
+    c=c.getParent();
+  }
+  if (c != null) {
+    engine=(Engine)c;
+  }
+  super.startInternal();
+}

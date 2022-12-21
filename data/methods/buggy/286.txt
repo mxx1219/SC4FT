@@ -1,0 +1,120 @@
+@Override protected IStatus run(final IProgressMonitor monitor){
+  monitor.beginTask("Starting TLC model checker in the cloud",90 + (nodes > 1 ? 20 : 0));
+  if (!params.validateCredentials().equals(Status.OK_STATUS)) {
+    return params.validateCredentials();
+  }
+  ComputeServiceContext context=null;
+  try {
+    PayloadHelper.checkToolsJar();
+    monitor.subTask("Tweaking tla2tools.jar to contain the spec & model (in background)");
+    final ExecutorService executor=Executors.newSingleThreadExecutor();
+    final Future<Payload> future=executor.submit(null);
+    executor.shutdown();
+    if (monitor.isCanceled()) {
+      return Status.CANCEL_STATUS;
+    }
+    final Properties properties=new Properties();
+    params.mungeProperties(properties);
+    final Iterable<AbstractModule> modules=ImmutableSet.<AbstractModule>of(new SshjSshClientModule(),isCLI ? new ConsoleLoggingModule() : new SLF4JLoggingModule());
+    final ContextBuilder builder=ContextBuilder.newBuilder(params.getCloudProvider()).credentials(params.getIdentity(),params.getCredentials()).modules(modules).overrides(properties);
+    params.mungeBuilder(builder);
+    monitor.subTask("Initializing " + builder.getApiMetadata().getName());
+    context=builder.buildView(ComputeServiceContext.class);
+    final ComputeService compute=context.getComputeService();
+    monitor.worked(10);
+    if (monitor.isCanceled()) {
+      return Status.CANCEL_STATUS;
+    }
+    monitor.subTask(String.format("Looking for %sresusable node%s to quick-start model checking (output might show failed connection attempts)",nodes > 1 ? "" : "a ",nodes > 1 ? "s" : ""));
+    final Set<NodeMetadata> createNodesInGroup=nodes > 1 ? new HashSet<>() : findReusableNodes(compute,monitor);
+    monitor.worked(5);
+    if (monitor.isCanceled()) {
+      return Status.CANCEL_STATUS;
+    }
+ else     if (createNodesInGroup.isEmpty()) {
+      createNodesInGroup.addAll(provisionNodes(compute,monitor));
+      if (monitor.isCanceled()) {
+        return Status.CANCEL_STATUS;
+      }
+    }
+ else {
+      monitor.subTask(String.format("Lookup succeeded thus skipping provisioning steps 5 to 7",nodes > 1 ? "" : "a ",nodes > 1 ? "s" : ""));
+      ((Application.MyProgressMonitor)monitor).incSteps(2);
+      monitor.worked(35);
+    }
+    final NodeMetadata master=Iterables.getLast(createNodesInGroup);
+    final String hostname=Iterables.getFirst(master.getPublicAddresses(),null);
+    monitor.subTask("Copying tla2tools.jar to master node at " + hostname);
+    SshClient sshClient=context.utils().sshForNode().apply(master);
+    sshClient.put("/tmp/tla2tools.pack.gz",future.get());
+    sshClient.disconnect();
+    monitor.worked(10);
+    if (monitor.isCanceled()) {
+      return Status.CANCEL_STATUS;
+    }
+    final String tlcMasterCommand=" sudo shutdown -c && rm -rf /mnt/tlc/* && " + "cd /mnt/tlc/ && " + "unpack200 /tmp/tla2tools.pack.gz /tmp/tla2tools.jar"+ " && "+ "screen -dm -S tlc bash -c \" "+ "java " + params.getJavaVMArgs() + " "+ (doJfr ? params.getFlightRecording() + " " : "")+ "-Djava.io.tmpdir=/mnt/tlc/ "+ "-Dcom.sun.management.jmxremote "+ "-Dcom.sun.management.jmxremote.port=5400 "+ "-Dcom.sun.management.jmxremote.ssl=false "+ "-Dcom.sun.management.jmxremote.authenticate=false "+ params.getJavaSystemProperties()+ " "+ "-jar /tmp/tla2tools.jar "+ params.getTLCParameters()+ " && "+ "sudo shutdown -h +"+ SHUTDOWN_AFTER+ "\"";
+    monitor.subTask("Starting TLC model checker process on the master node (in background)");
+    final ExecResponse response=compute.runScriptOnNode(master.getId(),exec(tlcMasterCommand),new TemplateOptions().overrideLoginCredentials(master.getCredentials()).runAsRoot(false).wrapInInitScript(true).blockOnComplete(false).blockUntilRunning(false));
+    throwExceptionOnErrorResponse(master,response,"Starting TLC model checker process on the master node");
+    monitor.worked(5);
+    if (nodes > 1) {
+      final Predicate<NodeMetadata> isMaster=new Predicate<NodeMetadata>(){
+        private final String masterHostname=master.getHostname();
+        public boolean apply(        NodeMetadata nodeMetadata){
+          final String hostname=nodeMetadata.getHostname();
+          return masterHostname.equals(hostname);
+        }
+      }
+;
+      monitor.subTask("Make TLC code available to all worker node(s)");
+      Map<? extends NodeMetadata,ExecResponse> execResponse=compute.runScriptOnNodesMatching(isMaster,exec("cp /tmp/tla2tools.jar /var/www/html/tla2tools.jar && " + "zip -d /var/www/html/tla2tools.jar model/*.tla model/*.cfg model/generated.properties"),new TemplateOptions().runAsRoot(true).wrapInInitScript(false));
+      throwExceptionOnErrorResponse(execResponse,"Make TLC code available to all worker node");
+      monitor.worked(10);
+      if (monitor.isCanceled()) {
+        return Status.CANCEL_STATUS;
+      }
+      final Predicate<NodeMetadata> onWorkers=new Predicate<NodeMetadata>(){
+        private final Iterable<? extends NodeMetadata> workers=Iterables.filter(createNodesInGroup,new Predicate<NodeMetadata>(){
+          private final String masterHostname=master.getHostname();
+          public boolean apply(          NodeMetadata nodeMetadata){
+            return !masterHostname.equals(nodeMetadata.getHostname());
+          }
+        }
+);
+        public boolean apply(        NodeMetadata nodeMetadata){
+          return Iterables.contains(workers,nodeMetadata);
+        }
+      }
+;
+      monitor.subTask("Starting TLC workers on the remaining node(s) (in background)");
+      final String privateHostname=Iterables.getOnlyElement(master.getPrivateAddresses());
+      execResponse=compute.runScriptOnNodesMatching(onWorkers,exec("cd /mnt/tlc/ && " + "wget http://" + privateHostname + "/tla2tools.jar && "+ "screen -dm -S tlc bash -c \" "+ "java "+ params.getJavaWorkerVMArgs()+ " "+ "-Djava.io.tmpdir=/mnt/tlc/ "+ "-Dcom.sun.management.jmxremote "+ "-Dcom.sun.management.jmxremote.port=5400 "+ "-Dcom.sun.management.jmxremote.ssl=false "+ "-Dcom.sun.management.jmxremote.authenticate=false "+ params.getJavaWorkerSystemProperties()+ " "+ "-cp /mnt/tlc/tla2tools.jar "+ params.getTLCWorkerParameters()+ " "+ privateHostname+ " "+ "&& "+ "sudo shutdown -h now"+ "\""),new TemplateOptions().runAsRoot(false).wrapInInitScript(true).blockOnComplete(false).blockUntilRunning(false));
+      throwExceptionOnErrorResponse(execResponse,"Starting TLC workers");
+      monitor.worked(10);
+    }
+    final ExecChannel execChannel=sshClient.execChannel("until pids=$(pgrep -f \"^java .* -jar /tmp/tla2tools.jar\"); do sleep 1; done" + " && " + "touch /mnt/tlc/MC.out"+ " && "+ "tail -q -f -n +1 /mnt/tlc/MC.out --pid $(pgrep -f \"^java .* -jar /tmp/tla2tools.jar\")");
+    monitor.done();
+    return new CloudStatus(Status.OK,"org.lamport.tla.toolbox.jcloud",Status.OK,String.format("TLC is model checking at host %s. " + "Expect to receive an email at %s with the model checking result eventually.",hostname,props.get("result.mail.address")),null,new URL("http://" + hostname + "/munin/"),execChannel == null ? null : execChannel.getOutput(),sshClient);
+  }
+ catch (  ExecutionException|InterruptedException|RunNodesException|IOException|RunScriptOnNodesException|NoSuchElementException|AuthorizationException|SshException e) {
+    e.printStackTrace();
+    if (context != null) {
+      destroyNodes(context,groupNameUUID);
+    }
+    return new Status(Status.ERROR,"org.lamport.tla.toolbox.jcloud",e.getMessage(),e);
+  }
+catch (  ScriptException e) {
+    if (context != null) {
+      destroyNodes(context,groupNameUUID);
+    }
+    return new Status(Status.ERROR,"org.lamport.tla.toolbox.jcloud",e.getTitle(),e);
+  }
+ finally {
+    if (context != null) {
+      if (monitor.isCanceled()) {
+        destroyNodes(context,groupNameUUID);
+      }
+      context.close();
+    }
+  }
+}

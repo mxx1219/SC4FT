@@ -1,0 +1,49 @@
+package com.jme3.scene.plugins.blender.modifiers;
+import com.jme3.animation.AnimControl;
+import com.jme3.animation.Animation;
+import com.jme3.animation.SpatialTrack;
+import com.jme3.scene.Node;
+import com.jme3.scene.plugins.blender.BlenderContext;
+import com.jme3.scene.plugins.blender.animations.Ipo;
+import com.jme3.scene.plugins.blender.exceptions.BlenderFileException;
+import com.jme3.scene.plugins.ogre.AnimData;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+class ObjectAnimationModifier extends Modifier {
+  private static final Logger LOGGER=Logger.getLogger(ObjectAnimationModifier.class.getName());
+  private AnimData animData;
+  public ObjectAnimationModifier(  Ipo ipo,  String objectAnimationName,  Long objectOMA,  BlenderContext blenderContext) throws BlenderFileException {
+    int fps=blenderContext.getBlenderKey().getFps();
+    SpatialTrack track=(SpatialTrack)ipo.calculateTrack(-1,0,ipo.getLastFrame(),fps,true);
+    Animation animation=new Animation(objectAnimationName,ipo.getLastFrame() / fps);
+    animation.setTracks(new SpatialTrack[]{track});
+    ArrayList<Animation> animations=new ArrayList<Animation>(1);
+    animations.add(animation);
+    animData=new AnimData(null,animations);
+    blenderContext.setAnimData(objectOMA,animData);
+  }
+  @Override public Node apply(  Node node,  BlenderContext blenderContext){
+    if (invalid) {
+      LOGGER.log(Level.WARNING,"Armature modifier is invalid! Cannot be applied to: {0}",node.getName());
+    }
+    if (animData != null) {
+      ArrayList<Animation> animList=animData.anims;
+      if (animList != null && animList.size() > 0) {
+        HashMap<String,Animation> anims=new HashMap<String,Animation>();
+        for (int i=0; i < animList.size(); ++i) {
+          Animation animation=animList.get(i);
+          anims.put(animation.getName(),animation);
+        }
+        AnimControl control=new AnimControl(null);
+        control.setAnimations(anims);
+        node.addControl(control);
+      }
+    }
+    return node;
+  }
+  @Override public String getType(){
+    return Modifier.OBJECT_ANIMATION_MODIFIER_DATA;
+  }
+}

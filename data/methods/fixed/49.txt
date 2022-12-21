@@ -1,0 +1,21 @@
+protected boolean onContextItemSelected(int itemId,Book book){
+switch (itemId) {
+case OPEN_BOOK_ITEM_ID:
+    openBook(book);
+  return true;
+case SHOW_BOOK_INFO_ITEM_ID:
+showBookInfo(book);
+return true;
+case ADD_TO_FAVORITES_ITEM_ID:
+LibraryCommon.LibraryInstance.addBookToFavorites(book);
+return true;
+case REMOVE_FROM_FAVORITES_ITEM_ID:
+LibraryCommon.LibraryInstance.removeBookFromFavorites(book);
+((BaseAdapter)myGallery.getAdapter()).notifyDataSetChanged();
+return true;
+case DELETE_BOOK_ITEM_ID:
+tryToDeleteBook(book);
+return true;
+}
+return false;
+}

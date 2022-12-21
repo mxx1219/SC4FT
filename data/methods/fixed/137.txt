@@ -1,0 +1,9 @@
+private void reloadPhotos(int position){
+  if (position < mImageFolderModels.size()) {
+    mCurrentImageFolderModel=mImageFolderModels.get(position);
+    if (mTitleTv != null) {
+      mTitleTv.setText(mCurrentImageFolderModel.name);
+    }
+    mPicAdapter.setImageFolderModel(mCurrentImageFolderModel);
+  }
+}

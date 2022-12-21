@@ -1,0 +1,3 @@
+@Test public void testEncode() throws Exception {
+  testBuilder().sqlQuery("SELECT encode(varchar_field, 'UTF-8') as rst from hive.readtest").unOrdered().baselineColumns("rst").baselineValues("varcharfield").baselineValues(new Object[]{null}).go();
+}

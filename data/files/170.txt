@@ -1,0 +1,494 @@
+package org.springframework.beans.factory.support;
+import java.lang.annotation.Annotation;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.beans.BeansException;
+import org.springframework.beans.FatalBeanException;
+import org.springframework.beans.TypeConverter;
+import org.springframework.beans.factory.BeanCreationException;
+import org.springframework.beans.factory.BeanCurrentlyInCreationException;
+import org.springframework.beans.factory.BeanDefinitionStoreException;
+import org.springframework.beans.factory.BeanFactory;
+import org.springframework.beans.factory.BeanFactoryUtils;
+import org.springframework.beans.factory.CannotLoadBeanClassException;
+import org.springframework.beans.factory.FactoryBean;
+import org.springframework.beans.factory.NoSuchBeanDefinitionException;
+import org.springframework.beans.factory.ObjectFactory;
+import org.springframework.beans.factory.SmartFactoryBean;
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.beans.factory.config.BeanDefinitionHolder;
+import org.springframework.beans.factory.config.ConfigurableBeanFactory;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
+import org.springframework.beans.factory.config.DependencyDescriptor;
+import org.springframework.core.annotation.AnnotationUtils;
+import org.springframework.util.Assert;
+import org.springframework.util.ObjectUtils;
+import org.springframework.util.StringUtils;
+public class DefaultListableBeanFactory extends AbstractAutowireCapableBeanFactory implements ConfigurableListableBeanFactory, BeanDefinitionRegistry {
+  private boolean allowBeanDefinitionOverriding=true;
+  private boolean allowEagerClassLoading=true;
+  private AutowireCandidateResolver autowireCandidateResolver=new SimpleAutowireCandidateResolver();
+  private final Map<Class,Object> resolvableDependencies=new HashMap<Class,Object>();
+  private final Map<String,BeanDefinition> beanDefinitionMap=new ConcurrentHashMap<String,BeanDefinition>();
+  private final List<String> beanDefinitionNames=new ArrayList<String>();
+  private boolean configurationFrozen=false;
+  private String[] frozenBeanDefinitionNames;
+  public DefaultListableBeanFactory(){
+    super();
+  }
+  public DefaultListableBeanFactory(  BeanFactory parentBeanFactory){
+    super(parentBeanFactory);
+  }
+  public void setAllowBeanDefinitionOverriding(  boolean allowBeanDefinitionOverriding){
+    this.allowBeanDefinitionOverriding=allowBeanDefinitionOverriding;
+  }
+  public void setAllowEagerClassLoading(  boolean allowEagerClassLoading){
+    this.allowEagerClassLoading=allowEagerClassLoading;
+  }
+  public void setAutowireCandidateResolver(  AutowireCandidateResolver autowireCandidateResolver){
+    Assert.notNull(autowireCandidateResolver,"AutowireCandidateResolver must not be null");
+    this.autowireCandidateResolver=autowireCandidateResolver;
+  }
+  public AutowireCandidateResolver getAutowireCandidateResolver(){
+    return this.autowireCandidateResolver;
+  }
+  @Override public void copyConfigurationFrom(  ConfigurableBeanFactory otherFactory){
+    super.copyConfigurationFrom(otherFactory);
+    if (otherFactory instanceof DefaultListableBeanFactory) {
+      DefaultListableBeanFactory otherListableFactory=(DefaultListableBeanFactory)otherFactory;
+      this.allowBeanDefinitionOverriding=otherListableFactory.allowBeanDefinitionOverriding;
+      this.allowEagerClassLoading=otherListableFactory.allowEagerClassLoading;
+      this.autowireCandidateResolver=otherListableFactory.autowireCandidateResolver;
+      this.resolvableDependencies.putAll(otherListableFactory.resolvableDependencies);
+    }
+  }
+  @Override public boolean containsBeanDefinition(  String beanName){
+    return this.beanDefinitionMap.containsKey(beanName);
+  }
+  public int getBeanDefinitionCount(){
+    return this.beanDefinitionMap.size();
+  }
+  public String[] getBeanDefinitionNames(){
+synchronized (this.beanDefinitionMap) {
+      if (this.frozenBeanDefinitionNames != null) {
+        return this.frozenBeanDefinitionNames;
+      }
+ else {
+        return StringUtils.toStringArray(this.beanDefinitionNames);
+      }
+    }
+  }
+  public String[] getBeanNamesForType(  Class type){
+    return getBeanNamesForType(type,true,true);
+  }
+  public String[] getBeanNamesForType(  Class type,  boolean includeNonSingletons,  boolean allowEagerInit){
+    List<String> result=new ArrayList<String>();
+    String[] beanDefinitionNames=getBeanDefinitionNames();
+    for (    String beanName : beanDefinitionNames) {
+      if (!isAlias(beanName)) {
+        try {
+          RootBeanDefinition mbd=getMergedLocalBeanDefinition(beanName);
+          if (!mbd.isAbstract() && (allowEagerInit || ((mbd.hasBeanClass() || !mbd.isLazyInit() || this.allowEagerClassLoading)) && !requiresEagerInitForType(mbd.getFactoryBeanName()))) {
+            boolean isFactoryBean=isFactoryBean(beanName,mbd);
+            boolean matchFound=(allowEagerInit || !isFactoryBean || containsSingleton(beanName)) && (includeNonSingletons || isSingleton(beanName)) && isTypeMatch(beanName,type);
+            if (!matchFound && isFactoryBean) {
+              beanName=FACTORY_BEAN_PREFIX + beanName;
+              matchFound=(includeNonSingletons || mbd.isSingleton()) && isTypeMatch(beanName,type);
+            }
+            if (matchFound) {
+              result.add(beanName);
+            }
+          }
+        }
+ catch (        CannotLoadBeanClassException ex) {
+          if (allowEagerInit) {
+            throw ex;
+          }
+          if (this.logger.isDebugEnabled()) {
+            this.logger.debug("Ignoring bean class loading failure for bean '" + beanName + "'",ex);
+          }
+          onSuppressedException(ex);
+        }
+catch (        BeanDefinitionStoreException ex) {
+          if (allowEagerInit) {
+            throw ex;
+          }
+          if (this.logger.isDebugEnabled()) {
+            this.logger.debug("Ignoring unresolvable metadata in bean definition '" + beanName + "'",ex);
+          }
+          onSuppressedException(ex);
+        }
+      }
+    }
+    String[] singletonNames=getSingletonNames();
+    for (    String beanName : singletonNames) {
+      if (!containsBeanDefinition(beanName)) {
+        if (isFactoryBean(beanName)) {
+          if ((includeNonSingletons || isSingleton(beanName)) && isTypeMatch(beanName,type)) {
+            result.add(beanName);
+            continue;
+          }
+          beanName=FACTORY_BEAN_PREFIX + beanName;
+        }
+        if (isTypeMatch(beanName,type)) {
+          result.add(beanName);
+        }
+      }
+    }
+    return StringUtils.toStringArray(result);
+  }
+  private boolean requiresEagerInitForType(  String factoryBeanName){
+    return (factoryBeanName != null && isFactoryBean(factoryBeanName) && !containsSingleton(factoryBeanName));
+  }
+  public <T>Map<String,T> getBeansOfType(  Class<T> type) throws BeansException {
+    return getBeansOfType(type,true,true);
+  }
+  public <T>Map<String,T> getBeansOfType(  Class<T> type,  boolean includeNonSingletons,  boolean allowEagerInit) throws BeansException {
+    String[] beanNames=getBeanNamesForType(type,includeNonSingletons,allowEagerInit);
+    Map<String,T> result=new LinkedHashMap<String,T>(beanNames.length);
+    for (    String beanName : beanNames) {
+      try {
+        result.put(beanName,getBean(beanName,type));
+      }
+ catch (      BeanCreationException ex) {
+        Throwable rootCause=ex.getMostSpecificCause();
+        if (rootCause instanceof BeanCurrentlyInCreationException) {
+          BeanCreationException bce=(BeanCreationException)rootCause;
+          if (isCurrentlyInCreation(bce.getBeanName())) {
+            if (this.logger.isDebugEnabled()) {
+              this.logger.debug("Ignoring match to currently created bean '" + beanName + "': "+ ex.getMessage());
+            }
+            onSuppressedException(ex);
+            continue;
+          }
+        }
+        throw ex;
+      }
+    }
+    return result;
+  }
+  public Map<String,Object> getBeansWithAnnotation(  Class<? extends Annotation> annotationType){
+    return getBeansWithAnnotation(annotationType,true,true);
+  }
+  public Map<String,Object> getBeansWithAnnotation(  Class<? extends Annotation> annotationType,  boolean includeNonSingletons,  boolean allowEagerInit){
+    Map<String,Object> results=new LinkedHashMap<String,Object>();
+    for (    String beanName : getBeanNamesForType(Object.class,includeNonSingletons,allowEagerInit)) {
+      if (findAnnotationOnBean(beanName,annotationType) != null) {
+        results.put(beanName,getBean(beanName));
+      }
+    }
+    return results;
+  }
+  public <A extends Annotation>A findAnnotationOnBean(  String beanName,  Class<A> annotationType){
+    Class<?> handlerType=getType(beanName);
+    A ann=AnnotationUtils.findAnnotation(handlerType,annotationType);
+    if (ann == null && containsBeanDefinition(beanName)) {
+      BeanDefinition bd=getMergedBeanDefinition(beanName);
+      if (bd instanceof AbstractBeanDefinition) {
+        AbstractBeanDefinition abd=(AbstractBeanDefinition)bd;
+        if (abd.hasBeanClass()) {
+          Class<?> beanClass=abd.getBeanClass();
+          ann=AnnotationUtils.findAnnotation(beanClass,annotationType);
+        }
+      }
+    }
+    return ann;
+  }
+  public void registerResolvableDependency(  Class dependencyType,  Object autowiredValue){
+    Assert.notNull(dependencyType,"Type must not be null");
+    if (autowiredValue != null) {
+      Assert.isTrue((autowiredValue instanceof ObjectFactory || dependencyType.isInstance(autowiredValue)),"Value [" + autowiredValue + "] does not implement specified type ["+ dependencyType.getName()+ "]");
+      this.resolvableDependencies.put(dependencyType,autowiredValue);
+    }
+  }
+  public boolean isAutowireCandidate(  String beanName,  DependencyDescriptor descriptor) throws NoSuchBeanDefinitionException {
+    boolean isFactoryBean=(descriptor != null && descriptor.getDependencyType() != null && FactoryBean.class.isAssignableFrom(descriptor.getDependencyType()));
+    if (isFactoryBean) {
+      beanName=BeanFactoryUtils.transformedBeanName(beanName);
+    }
+    if (!containsBeanDefinition(beanName)) {
+      if (containsSingleton(beanName)) {
+        return true;
+      }
+ else       if (getParentBeanFactory() instanceof ConfigurableListableBeanFactory) {
+        return ((ConfigurableListableBeanFactory)getParentBeanFactory()).isAutowireCandidate(beanName,descriptor);
+      }
+    }
+    return isAutowireCandidate(beanName,getMergedLocalBeanDefinition(beanName),descriptor);
+  }
+  protected boolean isAutowireCandidate(  String beanName,  RootBeanDefinition mbd,  DependencyDescriptor descriptor){
+    resolveBeanClass(mbd,beanName);
+    return getAutowireCandidateResolver().isAutowireCandidate(new BeanDefinitionHolder(mbd,beanName,getAliases(beanName)),descriptor);
+  }
+  @Override public BeanDefinition getBeanDefinition(  String beanName) throws NoSuchBeanDefinitionException {
+    BeanDefinition bd=this.beanDefinitionMap.get(beanName);
+    if (bd == null) {
+      if (this.logger.isTraceEnabled()) {
+        this.logger.trace("No bean named '" + beanName + "' found in "+ this);
+      }
+      throw new NoSuchBeanDefinitionException(beanName);
+    }
+    return bd;
+  }
+  public void freezeConfiguration(){
+    this.configurationFrozen=true;
+synchronized (this.beanDefinitionMap) {
+      this.frozenBeanDefinitionNames=StringUtils.toStringArray(this.beanDefinitionNames);
+    }
+  }
+  public boolean isConfigurationFrozen(){
+    return this.configurationFrozen;
+  }
+  @Override protected boolean isBeanEligibleForMetadataCaching(  String beanName){
+    return (this.configurationFrozen || super.isBeanEligibleForMetadataCaching(beanName));
+  }
+  public void preInstantiateSingletons() throws BeansException {
+    if (this.logger.isInfoEnabled()) {
+      this.logger.info("Pre-instantiating singletons in " + this);
+    }
+synchronized (this.beanDefinitionMap) {
+      for (      String beanName : this.beanDefinitionNames) {
+        RootBeanDefinition bd=getMergedLocalBeanDefinition(beanName);
+        if (!bd.isAbstract() && bd.isSingleton() && !bd.isLazyInit()) {
+          if (isFactoryBean(beanName)) {
+            FactoryBean factory=(FactoryBean)getBean(FACTORY_BEAN_PREFIX + beanName);
+            if (factory instanceof SmartFactoryBean && ((SmartFactoryBean)factory).isEagerInit()) {
+              getBean(beanName);
+            }
+          }
+ else {
+            getBean(beanName);
+          }
+        }
+      }
+    }
+  }
+  public void registerBeanDefinition(  String beanName,  BeanDefinition beanDefinition) throws BeanDefinitionStoreException {
+    Assert.hasText(beanName,"'beanName' must not be empty");
+    Assert.notNull(beanDefinition,"BeanDefinition must not be null");
+    if (beanDefinition instanceof AbstractBeanDefinition) {
+      try {
+        ((AbstractBeanDefinition)beanDefinition).validate();
+      }
+ catch (      BeanDefinitionValidationException ex) {
+        throw new BeanDefinitionStoreException(beanDefinition.getResourceDescription(),beanName,"Validation of bean definition failed",ex);
+      }
+    }
+synchronized (this.beanDefinitionMap) {
+      Object oldBeanDefinition=this.beanDefinitionMap.get(beanName);
+      if (oldBeanDefinition != null) {
+        if (!this.allowBeanDefinitionOverriding) {
+          throw new BeanDefinitionStoreException(beanDefinition.getResourceDescription(),beanName,"Cannot register bean definition [" + beanDefinition + "] for bean '"+ beanName+ "': There is already ["+ oldBeanDefinition+ "] bound.");
+        }
+ else {
+          if (this.logger.isInfoEnabled()) {
+            this.logger.info("Overriding bean definition for bean '" + beanName + "': replacing ["+ oldBeanDefinition+ "] with ["+ beanDefinition+ "]");
+          }
+        }
+      }
+ else {
+        this.beanDefinitionNames.add(beanName);
+        this.frozenBeanDefinitionNames=null;
+      }
+      this.beanDefinitionMap.put(beanName,beanDefinition);
+      resetBeanDefinition(beanName);
+    }
+  }
+  public void removeBeanDefinition(  String beanName) throws NoSuchBeanDefinitionException {
+    Assert.hasText(beanName,"'beanName' must not be empty");
+synchronized (this.beanDefinitionMap) {
+      BeanDefinition bd=this.beanDefinitionMap.remove(beanName);
+      if (bd == null) {
+        if (this.logger.isTraceEnabled()) {
+          this.logger.trace("No bean named '" + beanName + "' found in "+ this);
+        }
+        throw new NoSuchBeanDefinitionException(beanName);
+      }
+      this.beanDefinitionNames.remove(beanName);
+      this.frozenBeanDefinitionNames=null;
+      resetBeanDefinition(beanName);
+    }
+  }
+  protected void resetBeanDefinition(  String beanName){
+    clearMergedBeanDefinition(beanName);
+synchronized (getSingletonMutex()) {
+      destroySingleton(beanName);
+    }
+    for (    String bdName : this.beanDefinitionNames) {
+      if (!beanName.equals(bdName)) {
+        BeanDefinition bd=this.beanDefinitionMap.get(bdName);
+        if (beanName.equals(bd.getParentName())) {
+          resetBeanDefinition(bdName);
+        }
+      }
+    }
+  }
+  @Override protected boolean allowAliasOverriding(){
+    return this.allowBeanDefinitionOverriding;
+  }
+  public Object resolveDependency(  DependencyDescriptor descriptor,  String beanName,  Set<String> autowiredBeanNames,  TypeConverter typeConverter) throws BeansException {
+    Class type=descriptor.getDependencyType();
+    Object value=getAutowireCandidateResolver().getSuggestedValue(descriptor);
+    if (value != null) {
+      if (value instanceof String) {
+        value=evaluateBeanDefinitionString((String)value,getMergedBeanDefinition(beanName));
+      }
+      return typeConverter.convertIfNecessary(value,type);
+    }
+    if (type.isArray()) {
+      Class componentType=type.getComponentType();
+      Map<String,Object> matchingBeans=findAutowireCandidates(beanName,componentType,descriptor);
+      if (matchingBeans.isEmpty()) {
+        if (descriptor.isRequired()) {
+          raiseNoSuchBeanDefinitionException(componentType,"array of " + componentType.getName(),descriptor);
+        }
+        return null;
+      }
+      if (autowiredBeanNames != null) {
+        autowiredBeanNames.addAll(matchingBeans.keySet());
+      }
+      TypeConverter converter=(typeConverter != null ? typeConverter : getTypeConverter());
+      return converter.convertIfNecessary(matchingBeans.values(),type);
+    }
+ else     if (Collection.class.isAssignableFrom(type) && type.isInterface()) {
+      Class elementType=descriptor.getCollectionType();
+      if (elementType == null) {
+        if (descriptor.isRequired()) {
+          throw new FatalBeanException("No element type declared for collection [" + type.getName() + "]");
+        }
+        return null;
+      }
+      Map<String,Object> matchingBeans=findAutowireCandidates(beanName,elementType,descriptor);
+      if (matchingBeans.isEmpty()) {
+        if (descriptor.isRequired()) {
+          raiseNoSuchBeanDefinitionException(elementType,"collection of " + elementType.getName(),descriptor);
+        }
+        return null;
+      }
+      if (autowiredBeanNames != null) {
+        autowiredBeanNames.addAll(matchingBeans.keySet());
+      }
+      TypeConverter converter=(typeConverter != null ? typeConverter : getTypeConverter());
+      return converter.convertIfNecessary(matchingBeans.values(),type);
+    }
+ else     if (Map.class.isAssignableFrom(type) && type.isInterface()) {
+      Class keyType=descriptor.getMapKeyType();
+      if (keyType == null || !String.class.isAssignableFrom(keyType)) {
+        if (descriptor.isRequired()) {
+          throw new FatalBeanException("Key type [" + keyType + "] of map ["+ type.getName()+ "] must be assignable to [java.lang.String]");
+        }
+        return null;
+      }
+      Class valueType=descriptor.getMapValueType();
+      if (valueType == null) {
+        if (descriptor.isRequired()) {
+          throw new FatalBeanException("No value type declared for map [" + type.getName() + "]");
+        }
+        return null;
+      }
+      Map<String,Object> matchingBeans=findAutowireCandidates(beanName,valueType,descriptor);
+      if (matchingBeans.isEmpty()) {
+        if (descriptor.isRequired()) {
+          raiseNoSuchBeanDefinitionException(valueType,"map with value type " + valueType.getName(),descriptor);
+        }
+        return null;
+      }
+      if (autowiredBeanNames != null) {
+        autowiredBeanNames.addAll(matchingBeans.keySet());
+      }
+      return matchingBeans;
+    }
+ else {
+      Map<String,Object> matchingBeans=findAutowireCandidates(beanName,type,descriptor);
+      if (matchingBeans.isEmpty()) {
+        if (descriptor.isRequired()) {
+          throw new NoSuchBeanDefinitionException(type,"Unsatisfied dependency of type [" + type + "]: expected at least 1 matching bean");
+        }
+        return null;
+      }
+      if (matchingBeans.size() > 1) {
+        String primaryBeanName=determinePrimaryCandidate(matchingBeans,type);
+        if (primaryBeanName == null) {
+          throw new NoSuchBeanDefinitionException(type,"expected single matching bean but found " + matchingBeans.size() + ": "+ matchingBeans.keySet());
+        }
+        if (autowiredBeanNames != null) {
+          autowiredBeanNames.add(primaryBeanName);
+        }
+        return matchingBeans.get(primaryBeanName);
+      }
+      Map.Entry<String,Object> entry=matchingBeans.entrySet().iterator().next();
+      if (autowiredBeanNames != null) {
+        autowiredBeanNames.add(entry.getKey());
+      }
+      return entry.getValue();
+    }
+  }
+  protected Map<String,Object> findAutowireCandidates(  String beanName,  Class requiredType,  DependencyDescriptor descriptor){
+    String[] candidateNames=BeanFactoryUtils.beanNamesForTypeIncludingAncestors(this,requiredType,true,descriptor.isEager());
+    Map<String,Object> result=new LinkedHashMap<String,Object>(candidateNames.length);
+    for (    Class autowiringType : this.resolvableDependencies.keySet()) {
+      if (autowiringType.isAssignableFrom(requiredType)) {
+        Object autowiringValue=this.resolvableDependencies.get(autowiringType);
+        if (autowiringValue instanceof ObjectFactory && !requiredType.isInstance(autowiringValue)) {
+          autowiringValue=((ObjectFactory)autowiringValue).getObject();
+        }
+        if (requiredType.isInstance(autowiringValue)) {
+          result.put(ObjectUtils.identityToString(autowiringValue),autowiringValue);
+          break;
+        }
+      }
+    }
+    for (    String candidateName : candidateNames) {
+      if (!candidateName.equals(beanName) && isAutowireCandidate(candidateName,descriptor)) {
+        result.put(candidateName,getBean(candidateName));
+      }
+    }
+    return result;
+  }
+  protected String determinePrimaryCandidate(  Map<String,Object> candidateBeans,  Class type){
+    String primaryBeanName=null;
+    for (    Map.Entry<String,Object> entry : candidateBeans.entrySet()) {
+      String candidateBeanName=entry.getKey();
+      if (isPrimary(candidateBeanName,entry.getValue())) {
+        if (primaryBeanName != null) {
+          throw new NoSuchBeanDefinitionException(type,"more than one 'primary' bean found among candidates: " + candidateBeans.keySet());
+        }
+        primaryBeanName=candidateBeanName;
+      }
+    }
+    return primaryBeanName;
+  }
+  protected boolean isPrimary(  String beanName,  Object beanInstance){
+    if (containsBeanDefinition(beanName)) {
+      return getMergedLocalBeanDefinition(beanName).isPrimary();
+    }
+    if (this.resolvableDependencies.values().contains(beanInstance)) {
+      return true;
+    }
+    BeanFactory parentFactory=getParentBeanFactory();
+    return (parentFactory instanceof DefaultListableBeanFactory && ((DefaultListableBeanFactory)parentFactory).isPrimary(beanName,beanInstance));
+  }
+  private void raiseNoSuchBeanDefinitionException(  Class type,  String dependencyDescription,  DependencyDescriptor descriptor) throws NoSuchBeanDefinitionException {
+    throw new NoSuchBeanDefinitionException(type,dependencyDescription,"expected at least 1 bean which qualifies as autowire candidate for this dependency. " + "Dependency annotations: " + ObjectUtils.nullSafeToString(descriptor.getAnnotations()));
+  }
+  @Override public String toString(){
+    StringBuilder sb=new StringBuilder(ObjectUtils.identityToString(this));
+    sb.append(": defining beans [");
+    sb.append(StringUtils.arrayToCommaDelimitedString(getBeanDefinitionNames()));
+    sb.append("]; ");
+    BeanFactory parent=getParentBeanFactory();
+    if (parent == null) {
+      sb.append("root of factory hierarchy");
+    }
+ else {
+      sb.append("parent: ").append(ObjectUtils.identityToString(parent));
+    }
+    return sb.toString();
+  }
+}

@@ -1,0 +1,12 @@
+@Override public void onResponse(AnalyzeResponse response){
+  try {
+    XContentBuilder builder=restContentBuilder(request,false);
+    builder.startObject();
+    response.toXContent(builder,request);
+    builder.endObject();
+    channel.sendResponse(new XContentRestResponse(request,OK,builder));
+  }
+ catch (  Throwable e) {
+    onFailure(e);
+  }
+}

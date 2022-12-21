@@ -1,0 +1,14 @@
+boolean setIdFor(final SObjectNode node,final String referenceId,final String id){
+  final Attributes attributes=node.getAttributes();
+  final String attributesReferenceId=attributes.getReferenceId();
+  if (Objects.equals(attributesReferenceId,referenceId)) {
+    final Object object=node.getObject();
+    if (object instanceof AbstractSObjectBase) {
+      return updateBaseObjectId(id,(AbstractSObjectBase)object);
+    }
+ else {
+      return updateGeneralObjectId(id,object);
+    }
+  }
+  return StreamSupport.stream(node.getChildNodes().spliterator(),false).anyMatch(null);
+}

@@ -1,0 +1,79 @@
+public void deleteDataForExecution(ExecutionEntity executionEntity,String deleteReason,boolean cancel){
+  executionEntity.setEnded(true);
+  executionEntity.setActive(false);
+  boolean enableExecutionRelationshipCounts=isExecutionRelatedEntityCountEnabled(executionEntity);
+  if (executionEntity.getId().equals(executionEntity.getProcessInstanceId()) && (!enableExecutionRelationshipCounts || (enableExecutionRelationshipCounts && ((CountingExecutionEntity)executionEntity).getIdentityLinkCount() > 0))) {
+    IdentityLinkEntityManager identityLinkEntityManager=getIdentityLinkEntityManager();
+    Collection<IdentityLinkEntity> identityLinks=identityLinkEntityManager.findIdentityLinksByProcessInstanceId(executionEntity.getProcessInstanceId());
+    for (    IdentityLinkEntity identityLink : identityLinks) {
+      identityLinkEntityManager.delete(identityLink);
+    }
+  }
+  if (!enableExecutionRelationshipCounts || (enableExecutionRelationshipCounts && ((CountingExecutionEntity)executionEntity).getVariableCount() > 0)) {
+    Collection<VariableInstance> executionVariables=executionEntity.getVariableInstancesLocal().values();
+    for (    VariableInstance variableInstance : executionVariables) {
+      if (variableInstance instanceof VariableInstanceEntity) {
+        VariableInstanceEntity variableInstanceEntity=(VariableInstanceEntity)variableInstance;
+        VariableInstanceEntityManager variableInstanceEntityManager=getVariableInstanceEntityManager();
+        variableInstanceEntityManager.delete(variableInstanceEntity);
+        if (variableInstanceEntity.getByteArrayRef() != null && variableInstanceEntity.getByteArrayRef().getId() != null) {
+          getByteArrayEntityManager().deleteByteArrayById(variableInstanceEntity.getByteArrayRef().getId());
+        }
+      }
+    }
+  }
+  if (!enableExecutionRelationshipCounts || (enableExecutionRelationshipCounts && ((CountingExecutionEntity)executionEntity).getTaskCount() > 0)) {
+    TaskEntityManager taskEntityManager=getTaskEntityManager();
+    Collection<TaskEntity> tasksForExecution=taskEntityManager.findTasksByExecutionId(executionEntity.getId());
+    for (    TaskEntity taskEntity : tasksForExecution) {
+      taskEntityManager.deleteTask(taskEntity,deleteReason,false,cancel);
+    }
+  }
+  if (!enableExecutionRelationshipCounts || (enableExecutionRelationshipCounts && ((CountingExecutionEntity)executionEntity).getTimerJobCount() > 0)) {
+    TimerJobEntityManager timerJobEntityManager=getTimerJobEntityManager();
+    Collection<TimerJobEntity> timerJobsForExecution=timerJobEntityManager.findJobsByExecutionId(executionEntity.getId());
+    for (    TimerJobEntity job : timerJobsForExecution) {
+      timerJobEntityManager.delete(job);
+      if (getEventDispatcher().isEnabled()) {
+        getEventDispatcher().dispatchEvent(ActivitiEventBuilder.createEntityEvent(ActivitiEventType.JOB_CANCELED,job));
+      }
+    }
+  }
+  if (!enableExecutionRelationshipCounts || (enableExecutionRelationshipCounts && ((CountingExecutionEntity)executionEntity).getJobCount() > 0)) {
+    JobEntityManager jobEntityManager=getJobEntityManager();
+    Collection<JobEntity> jobsForExecution=jobEntityManager.findJobsByExecutionId(executionEntity.getId());
+    for (    JobEntity job : jobsForExecution) {
+      getJobEntityManager().delete(job);
+      if (getEventDispatcher().isEnabled()) {
+        getEventDispatcher().dispatchEvent(ActivitiEventBuilder.createEntityEvent(ActivitiEventType.JOB_CANCELED,job));
+      }
+    }
+  }
+  if (!enableExecutionRelationshipCounts || (enableExecutionRelationshipCounts && ((CountingExecutionEntity)executionEntity).getSuspendedJobCount() > 0)) {
+    SuspendedJobEntityManager suspendedJobEntityManager=getSuspendedJobEntityManager();
+    Collection<SuspendedJobEntity> suspendedJobsForExecution=suspendedJobEntityManager.findJobsByExecutionId(executionEntity.getId());
+    for (    SuspendedJobEntity job : suspendedJobsForExecution) {
+      suspendedJobEntityManager.delete(job);
+      if (getEventDispatcher().isEnabled()) {
+        getEventDispatcher().dispatchEvent(ActivitiEventBuilder.createEntityEvent(ActivitiEventType.JOB_CANCELED,job));
+      }
+    }
+  }
+  if (!enableExecutionRelationshipCounts || (enableExecutionRelationshipCounts && ((CountingExecutionEntity)executionEntity).getDeadLetterJobCount() > 0)) {
+    DeadLetterJobEntityManager deadLetterJobEntityManager=getDeadLetterJobEntityManager();
+    Collection<DeadLetterJobEntity> deadLetterJobsForExecution=deadLetterJobEntityManager.findJobsByExecutionId(executionEntity.getId());
+    for (    DeadLetterJobEntity job : deadLetterJobsForExecution) {
+      deadLetterJobEntityManager.delete(job);
+      if (getEventDispatcher().isEnabled()) {
+        getEventDispatcher().dispatchEvent(ActivitiEventBuilder.createEntityEvent(ActivitiEventType.JOB_CANCELED,job));
+      }
+    }
+  }
+  if (!enableExecutionRelationshipCounts || (enableExecutionRelationshipCounts && ((CountingExecutionEntity)executionEntity).getEventSubscriptionCount() > 0)) {
+    EventSubscriptionEntityManager eventSubscriptionEntityManager=getEventSubscriptionEntityManager();
+    List<EventSubscriptionEntity> eventSubscriptions=eventSubscriptionEntityManager.findEventSubscriptionsByExecution(executionEntity.getId());
+    for (    EventSubscriptionEntity eventSubscription : eventSubscriptions) {
+      eventSubscriptionEntityManager.delete(eventSubscription);
+    }
+  }
+}

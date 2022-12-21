@@ -1,0 +1,4 @@
+public Builder timeZone(DateTimeZone timeZone){
+  this.timeZone=timeZone;
+  return this;
+}

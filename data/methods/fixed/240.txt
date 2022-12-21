@@ -1,0 +1,10 @@
+public void toTTSSetting(){
+  try {
+    Intent intent=new Intent();
+    intent.setAction("com.android.settings.TTS_SETTINGS");
+    intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    startActivity(intent);
+  }
+ catch (  Exception ignored) {
+  }
+}

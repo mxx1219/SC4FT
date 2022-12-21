@@ -1,0 +1,2 @@
+@Override protected AbstractNonNamespacedResourceOperator<KubernetesClient,Node,NodeList,DoneableNode,Resource<Node,DoneableNode>> operator(){
+}

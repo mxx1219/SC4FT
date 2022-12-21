@@ -1,0 +1,100 @@
+protected static void processDiscourse(Document doc,Dictionaries dict){
+  Boolean useMarkedDiscourse=doc.annotation.get(CoreAnnotations.UseMarkedDiscourseAnnotation.class);
+  if (useMarkedDiscourse == null || !useMarkedDiscourse) {
+    for (    CoreLabel l : doc.annotation.get(CoreAnnotations.TokensAnnotation.class)) {
+      l.remove(CoreAnnotations.SpeakerAnnotation.class);
+      l.remove(CoreAnnotations.UtteranceAnnotation.class);
+    }
+  }
+  setUtteranceAndSpeakerAnnotation(doc);
+  for (  Mention m : doc.predictedMentionsByID.values()) {
+    m.utter=m.headWord.get(CoreAnnotations.UtteranceAnnotation.class);
+  }
+  doc.docType=findDocType(doc);
+  findSpeakers(doc,dict);
+  boolean debug=false;
+  if (debug) {
+    for (    CoreMap sent : doc.annotation.get(CoreAnnotations.SentencesAnnotation.class)) {
+      for (      CoreLabel cl : sent.get(TokensAnnotation.class)) {
+        log.info("   " + cl.word() + "-"+ cl.get(UtteranceAnnotation.class)+ "-"+ cl.get(SpeakerAnnotation.class));
+      }
+    }
+    for (    Integer utter : doc.speakers.keySet()) {
+      String speakerID=doc.speakers.get(utter);
+      log.info("utterance: " + utter);
+      log.info("speakers value: " + speakerID);
+      log.info("mention for it: " + ((NumberMatchingRegex.isDecimalInteger(speakerID)) ? doc.predictedMentionsByID.get(Integer.parseInt(doc.speakers.get(utter))) : "no mention for this speaker yet"));
+    }
+    log.info("AA SPEAKERS: " + doc.speakers);
+  }
+  for (  Integer utter : doc.speakers.keySet()) {
+    String speaker=doc.speakers.get(utter);
+    SpeakerInfo speakerInfo=doc.speakerInfoMap.get(speaker);
+    if (speakerInfo == null) {
+      doc.speakerInfoMap.put(speaker,speakerInfo=new SpeakerInfo(speaker));
+    }
+  }
+  if (debug) {
+    log.info("BB SPEAKER INFO MAP: " + doc.speakerInfoMap);
+  }
+  Map<String,Integer> speakerConversion=Generics.newHashMap();
+  for (  String speaker : doc.speakerInfoMap.keySet()) {
+    SpeakerInfo speakerInfo=doc.speakerInfoMap.get(speaker);
+    if (speakerInfo.hasRealSpeakerName()) {
+      boolean found=false;
+      for (      Mention m : doc.predictedMentionsByID.values()) {
+        if (CorefRules.mentionMatchesSpeaker(m,speakerInfo,true)) {
+          speakerConversion.put(speaker,m.mentionID);
+          found=true;
+          break;
+        }
+      }
+      if (!found) {
+        for (        Mention m : doc.predictedMentionsByID.values()) {
+          if (CorefRules.mentionMatchesSpeaker(m,speakerInfo,false)) {
+            speakerConversion.put(speaker,m.mentionID);
+            break;
+          }
+        }
+      }
+    }
+  }
+  if (debug)   log.info("CC speaker conversion: " + speakerConversion);
+  for (  Integer utter : doc.speakers.keySet()) {
+    String speaker=doc.speakers.get(utter);
+    if (speakerConversion.containsKey(speaker)) {
+      int speakerID=speakerConversion.get(speaker);
+      doc.speakers.put(utter,Integer.toString(speakerID));
+    }
+  }
+  for (  String speaker : speakerConversion.keySet()) {
+    doc.speakerInfoMap.put(Integer.toString(speakerConversion.get(speaker)),doc.speakerInfoMap.get(speaker));
+    doc.speakerInfoMap.remove(speaker);
+  }
+  for (  CoreLabel cl : doc.annotation.get(TokensAnnotation.class)) {
+    int utter=cl.get(UtteranceAnnotation.class);
+    if (doc.speakers.containsKey(utter)) {
+      cl.set(CoreAnnotations.SpeakerAnnotation.class,doc.speakers.get(utter));
+    }
+  }
+  for (  Mention m : doc.predictedMentionsByID.values()) {
+    String speaker=m.headWord.get(CoreAnnotations.SpeakerAnnotation.class);
+    if (debug)     log.info("DD: " + speaker);
+    if (doc.conllDoc != null) {
+      if (NumberMatchingRegex.isDecimalInteger(speaker)) {
+        int speakerMentionID=Integer.parseInt(speaker);
+        doc.speakerPairs.add(new Pair<>(m.mentionID,speakerMentionID));
+      }
+    }
+  }
+  if (debug) {
+    log.info("==========================================================================");
+    for (    Integer utter : doc.speakers.keySet()) {
+      String speakerID=doc.speakers.get(utter);
+      log.info("utterance: " + utter);
+      log.info("speakers value: " + speakerID);
+      log.info("mention for it: " + ((NumberMatchingRegex.isDecimalInteger(speakerID)) ? doc.predictedMentionsByID.get(Integer.parseInt(doc.speakers.get(utter))) : "no mention for this speaker yet"));
+    }
+    log.info(doc.speakers);
+  }
+}

@@ -1,0 +1,28 @@
+public void refreshValues(HierarchicalGraph graph){
+  List<Object> vals=new ArrayList<Object>();
+  if (AttributeUtils.getDefault().isNodeColumn(column)) {
+    for (    Node n : graph.getNodes()) {
+      Object val=n.getNodeData().getAttributes().getValue(column.getIndex());
+      val=dynamicHelper.getDynamicValue(val);
+      if (val != null) {
+        vals.add(val);
+      }
+    }
+  }
+ else {
+    for (    Edge e : graph.getEdgesAndMetaEdges()) {
+      Object val=e.getEdgeData().getAttributes().getValue(column.getIndex());
+      val=dynamicHelper.getDynamicValue(val);
+      if (val != null) {
+        vals.add(val);
+      }
+    }
+  }
+  if (vals.isEmpty()) {
+    vals.add(0);
+  }
+  values=ComparableArrayConverter.convert(vals);
+  min=(Number)AttributeUtils.getDefault().getMin(column,values);
+  max=(Number)AttributeUtils.getDefault().getMax(column,values);
+  match=Range.trimToBounds(min,max,match);
+}

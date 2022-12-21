@@ -1,0 +1,3 @@
+@Override public void onBindViewHolder(LanguagesAdapter.LanguageViewHolder viewHolder,int position){
+  viewHolder.populateViews(mFilteredLocalesList.get(position));
+}

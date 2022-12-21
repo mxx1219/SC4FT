@@ -1,0 +1,14 @@
+@Override public Duration getTTL(final TitanSchemaType type){
+  Preconditions.checkArgument(type != null);
+  int ttl;
+  if (type instanceof VertexLabelVertex) {
+    ttl=((VertexLabelVertex)type).getTTL();
+  }
+ else   if (type instanceof RelationTypeVertex) {
+    ttl=((RelationTypeVertex)type).getTTL();
+  }
+ else {
+    throw new IllegalArgumentException("given type does not support TTL: " + type.getClass());
+  }
+  return (-1 == ttl) ? null : new StandardDuration(ttl,TimeUnit.SECONDS);
+}

@@ -1,0 +1,5 @@
+@Override public void sendResult(Bundle data) throws RemoteException {
+  if (mWakeLock.isHeld()) {
+    mWakeLock.release();
+  }
+}

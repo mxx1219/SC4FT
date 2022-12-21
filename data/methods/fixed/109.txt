@@ -1,0 +1,15 @@
+public void testAvgFunc(){
+  getTester().setFor(SqlStdOperatorTable.avgOperator,VM_EXPAND);
+  getTester().checkFails("avg(^*^)","Unknown identifier '\\*'",false);
+  getTester().checkFails("^avg(cast(null as varchar(2)))^","(?s)Cannot apply 'AVG' to arguments of type 'AVG\\(<VARCHAR\\(2\\)>\\)'\\. Supported form\\(s\\): 'AVG\\(<NUMERIC>\\)'.*",false);
+  getTester().checkType("AVG(CAST(NULL AS INTEGER))","INTEGER");
+  getTester().checkType("AVG(DISTINCT 1.5)","DECIMAL(2, 1)");
+  if (!enable) {
+    return;
+  }
+  final String[] values={"0","CAST(null AS FLOAT)","3","3"};
+  getTester().checkAgg("AVG(x)",values,2d,0d);
+  getTester().checkAgg("AVG(DISTINCT x)",values,1.5d,0d);
+  Object result=-1;
+  getTester().checkAgg("avg(DISTINCT CASE x WHEN 0 THEN NULL ELSE -1 END)",values,result,0d);
+}

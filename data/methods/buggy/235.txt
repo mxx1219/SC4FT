@@ -1,0 +1,3 @@
+@AfterClass public void tearDown() throws Exception {
+  testFactoryWithRootFolder.delete();
+}

@@ -1,0 +1,382 @@
+package io.github.lukehutch.fastclasspathscanner.classgraph;
+import io.github.lukehutch.fastclasspathscanner.utils.LazyMap;
+import io.github.lukehutch.fastclasspathscanner.utils.MultiSet;
+import io.github.lukehutch.fastclasspathscanner.utils.Utils;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+public class ClassGraphBuilder {
+  ArrayList<StandardClassDAGNode> standardClassNodes=new ArrayList<>();
+  ArrayList<InterfaceDAGNode> interfaceNodes=new ArrayList<>();
+  ArrayList<AnnotationDAGNode> annotationNodes=new ArrayList<>();
+  public ClassGraphBuilder(  final Collection<ClassInfo> classInfoFromScan){
+    final ArrayList<ClassInfo> allClassInfo=new ArrayList<>(Utils.mergeScalaAuxClasses(classInfoFromScan));
+    final HashMap<String,DAGNode> classNameToDAGNode=new HashMap<>();
+    for (    final ClassInfo classInfo : allClassInfo) {
+      final String className=classInfo.className;
+      if (classInfo.isAnnotation) {
+        final AnnotationDAGNode newNode=new AnnotationDAGNode(classInfo);
+        classNameToDAGNode.put(className,newNode);
+        annotationNodes.add(newNode);
+      }
+ else       if (classInfo.isInterface) {
+        final InterfaceDAGNode newNode=new InterfaceDAGNode(classInfo);
+        classNameToDAGNode.put(className,newNode);
+        interfaceNodes.add(newNode);
+      }
+ else {
+        final StandardClassDAGNode newNode=new StandardClassDAGNode(classInfo);
+        classNameToDAGNode.put(className,newNode);
+        standardClassNodes.add(newNode);
+      }
+    }
+    for (    final DAGNode node : classNameToDAGNode.values()) {
+      node.connect(classNameToDAGNode);
+    }
+    DAGNode.findTransitiveClosure(standardClassNodes);
+    DAGNode.findTransitiveClosure(interfaceNodes);
+    DAGNode.findTransitiveClosure(annotationNodes);
+  }
+  private final LazyMap<String,DAGNode> classNameToStandardClassNode=new LazyMap<String,DAGNode>(){
+    @Override public void initialize(){
+      for (      final DAGNode classNode : standardClassNodes) {
+        map.put(classNode.name,classNode);
+      }
+    }
+  }
+;
+  private final LazyMap<String,DAGNode> interfaceNameToInterfaceNode=new LazyMap<String,DAGNode>(){
+    @Override public void initialize(){
+      for (      final DAGNode interfaceNode : interfaceNodes) {
+        map.put(interfaceNode.name,interfaceNode);
+      }
+    }
+  }
+;
+  private final LazyMap<String,DAGNode> annotationNameToAnnotationNode=new LazyMap<String,DAGNode>(){
+    @Override public void initialize(){
+      for (      final DAGNode annotationNode : annotationNodes) {
+        map.put(annotationNode.name,annotationNode);
+      }
+    }
+  }
+;
+  private final LazyMap<String,ArrayList<String>> namesOfAllClasses=new LazyMap<String,ArrayList<String>>(){
+    @Override protected ArrayList<String> generateValue(    final String ignored){
+      return Utils.sortedCopy(classNameToStandardClassNode.keySet(),interfaceNameToInterfaceNode.keySet(),annotationNameToAnnotationNode.keySet());
+    }
+  }
+;
+  private final LazyMap<String,ArrayList<String>> namesOfAllStandardClasses=new LazyMap<String,ArrayList<String>>(){
+    @Override protected ArrayList<String> generateValue(    final String ignored){
+      return Utils.sortedCopy(classNameToStandardClassNode.keySet());
+    }
+  }
+;
+  private final LazyMap<String,ArrayList<String>> namesOfAllInterfaceClasses=new LazyMap<String,ArrayList<String>>(){
+    @Override protected ArrayList<String> generateValue(    final String ignored){
+      return Utils.sortedCopy(interfaceNameToInterfaceNode.keySet());
+    }
+  }
+;
+  private final LazyMap<String,ArrayList<String>> namesOfAllAnnotationClasses=new LazyMap<String,ArrayList<String>>(){
+    @Override protected ArrayList<String> generateValue(    final String ignored){
+      return Utils.sortedCopy(annotationNameToAnnotationNode.keySet());
+    }
+  }
+;
+  public List<String> getNamesOfAllClasses(){
+    return namesOfAllClasses.get("");
+  }
+  public List<String> getNamesOfAllStandardClasses(){
+    return namesOfAllStandardClasses.get("");
+  }
+  public List<String> getNamesOfAllInterfaceClasses(){
+    return namesOfAllInterfaceClasses.get("");
+  }
+  public List<String> getNamesOfAllAnnotationClasses(){
+    return namesOfAllAnnotationClasses.get("");
+  }
+  private final LazyMap<String,ArrayList<String>> classNameToSubclassNames=new LazyMap<String,ArrayList<String>>(){
+    @Override protected ArrayList<String> generateValue(    final String className){
+      final DAGNode classNode=classNameToStandardClassNode.get(className);
+      if (classNode == null) {
+        return null;
+      }
+      final ArrayList<String> subclasses=new ArrayList<>(classNode.allSubNodes.size());
+      for (      final DAGNode subNode : classNode.allSubNodes) {
+        subclasses.add(subNode.name);
+      }
+      Collections.sort(subclasses);
+      return subclasses;
+    }
+  }
+;
+  public List<String> getNamesOfSubclassesOf(  final String className){
+    final ArrayList<String> subclassNames=classNameToSubclassNames.get(className);
+    if (subclassNames == null) {
+      return Collections.emptyList();
+    }
+ else {
+      return subclassNames;
+    }
+  }
+  private final LazyMap<String,ArrayList<String>> classNameToSuperclassNames=new LazyMap<String,ArrayList<String>>(){
+    @Override protected ArrayList<String> generateValue(    final String className){
+      final DAGNode classNode=classNameToStandardClassNode.get(className);
+      if (classNode == null) {
+        return null;
+      }
+      final ArrayList<String> superclasses=new ArrayList<>(classNode.allSuperNodes.size());
+      for (      final DAGNode superNode : classNode.allSuperNodes) {
+        superclasses.add(superNode.name);
+      }
+      Collections.sort(superclasses);
+      return superclasses;
+    }
+  }
+;
+  public List<String> getNamesOfSuperclassesOf(  final String className){
+    final ArrayList<String> superclassNames=classNameToSuperclassNames.get(className);
+    if (superclassNames == null) {
+      return Collections.emptyList();
+    }
+ else {
+      return superclassNames;
+    }
+  }
+  private final LazyMap<String,ArrayList<String>> fieldTypeToClassNames=LazyMap.convertToMultiMapSorted(LazyMap.invertMultiSet(new LazyMap<String,HashSet<String>>(){
+    @Override public void initialize(){
+      for (      final StandardClassDAGNode node : standardClassNodes) {
+        if (!node.whitelistedFieldTypeNodes.isEmpty()) {
+          final HashSet<String> fieldTypeNames=new HashSet<>();
+          for (          final DAGNode fieldType : node.whitelistedFieldTypeNodes) {
+            fieldTypeNames.add(fieldType.name);
+          }
+          map.put(node.name,fieldTypeNames);
+        }
+      }
+    }
+  }
+));
+  public List<String> getNamesOfClassesWithFieldOfType(  final String fieldTypeName){
+    final List<String> classesWithFieldOfNamedType=fieldTypeToClassNames.get(fieldTypeName);
+    if (classesWithFieldOfNamedType == null) {
+      return Collections.emptyList();
+    }
+ else {
+      return classesWithFieldOfNamedType;
+    }
+  }
+  private final LazyMap<String,ArrayList<String>> interfaceNameToSubinterfaceNames=new LazyMap<String,ArrayList<String>>(){
+    @Override protected ArrayList<String> generateValue(    final String interfaceName){
+      final DAGNode interfaceNode=interfaceNameToInterfaceNode.get(interfaceName);
+      if (interfaceNode == null) {
+        return null;
+      }
+      final ArrayList<String> subinterfaces=new ArrayList<>(interfaceNode.allSubNodes.size());
+      for (      final DAGNode subNode : interfaceNode.allSubNodes) {
+        subinterfaces.add(subNode.name);
+      }
+      Collections.sort(subinterfaces);
+      return subinterfaces;
+    }
+  }
+;
+  public List<String> getNamesOfSubinterfacesOf(  final String interfaceName){
+    final ArrayList<String> subinterfaceNames=interfaceNameToSubinterfaceNames.get(interfaceName);
+    if (subinterfaceNames == null) {
+      return Collections.emptyList();
+    }
+ else {
+      return subinterfaceNames;
+    }
+  }
+  private final LazyMap<String,ArrayList<String>> interfaceNameToSuperinterfaceNames=new LazyMap<String,ArrayList<String>>(){
+    @Override protected ArrayList<String> generateValue(    final String interfaceName){
+      final DAGNode interfaceNode=interfaceNameToInterfaceNode.get(interfaceName);
+      if (interfaceNode == null) {
+        return null;
+      }
+      final ArrayList<String> superinterfaces=new ArrayList<>(interfaceNode.allSuperNodes.size());
+      for (      final DAGNode superNode : interfaceNode.allSuperNodes) {
+        superinterfaces.add(superNode.name);
+      }
+      Collections.sort(superinterfaces);
+      return superinterfaces;
+    }
+  }
+;
+  public List<String> getNamesOfSuperinterfacesOf(  final String interfaceName){
+    final ArrayList<String> superinterfaceNames=interfaceNameToSuperinterfaceNames.get(interfaceName);
+    if (superinterfaceNames == null) {
+      return Collections.emptyList();
+    }
+ else {
+      return superinterfaceNames;
+    }
+  }
+  private final LazyMap<String,HashSet<String>> interfaceNameToClassNamesSet=new LazyMap<String,HashSet<String>>(){
+    @Override public void initialize(){
+      for (      final StandardClassDAGNode classNode : standardClassNodes) {
+        final ArrayList<InterfaceDAGNode> interfaceNodes=classNode.implementedInterfaceClassNodes;
+        for (        final DAGNode interfaceNode : interfaceNodes) {
+          MultiSet.put(map,interfaceNode.name,classNode.name);
+          for (          final DAGNode subclassNode : classNode.allSubNodes) {
+            MultiSet.put(map,interfaceNode.name,subclassNode.name);
+          }
+          for (          final DAGNode superinterfaceNode : interfaceNode.allSuperNodes) {
+            MultiSet.put(map,superinterfaceNode.name,classNode.name);
+            for (            final DAGNode subclassNode : classNode.allSubNodes) {
+              MultiSet.put(map,superinterfaceNode.name,subclassNode.name);
+            }
+          }
+        }
+      }
+    }
+  }
+;
+  private final LazyMap<String,ArrayList<String>> interfaceNameToClassNames=LazyMap.convertToMultiMapSorted(interfaceNameToClassNamesSet);
+  public List<String> getNamesOfClassesImplementing(  final String interfaceName){
+    final ArrayList<String> classes=interfaceNameToClassNames.get(interfaceName);
+    if (classes == null) {
+      return Collections.emptyList();
+    }
+ else {
+      return classes;
+    }
+  }
+  private final LazyMap<String,HashSet<String>> annotationNameToAnnotatedClassNamesSet=new LazyMap<String,HashSet<String>>(){
+    @Override protected HashSet<String> generateValue(    final String annotationName){
+      final DAGNode annotationNode=annotationNameToAnnotationNode.get(annotationName);
+      if (annotationNode == null) {
+        return null;
+      }
+      final HashSet<String> classNames=new HashSet<>();
+      for (      final DAGNode crossLinkedNode : ((AnnotationDAGNode)annotationNode).annotatedClassNodes) {
+        classNames.add(crossLinkedNode.name);
+      }
+      for (      final DAGNode subNode : annotationNode.allSubNodes) {
+        for (        final DAGNode crossLinkedNode : ((AnnotationDAGNode)subNode).annotatedClassNodes) {
+          classNames.add(crossLinkedNode.name);
+        }
+      }
+      return classNames;
+    }
+  }
+;
+  private final LazyMap<String,ArrayList<String>> annotationNameToAnnotatedClassNames=LazyMap.convertToMultiMapSorted(annotationNameToAnnotatedClassNamesSet);
+  public List<String> getNamesOfClassesWithAnnotation(  final String annotationName){
+    final ArrayList<String> classNames=annotationNameToAnnotatedClassNames.get(annotationName);
+    if (classNames == null) {
+      return Collections.emptyList();
+    }
+ else {
+      return classNames;
+    }
+  }
+  private final LazyMap<String,ArrayList<String>> classNameToAnnotationNames=LazyMap.convertToMultiMapSorted(LazyMap.invertMultiSet(annotationNameToAnnotatedClassNamesSet,annotationNameToAnnotationNode));
+  public List<String> getNamesOfAnnotationsOnClass(  final String classOrInterfaceName){
+    final ArrayList<String> annotationNames=classNameToAnnotationNames.get(classOrInterfaceName);
+    if (annotationNames == null) {
+      return Collections.emptyList();
+    }
+ else {
+      return annotationNames;
+    }
+  }
+  private final LazyMap<String,HashSet<String>> metaAnnotationNameToAnnotatedAnnotationNamesSet=new LazyMap<String,HashSet<String>>(){
+    @Override protected HashSet<String> generateValue(    final String annotationName){
+      final DAGNode annotationNode=annotationNameToAnnotationNode.get(annotationName);
+      if (annotationNode == null) {
+        return null;
+      }
+      final HashSet<String> subNodes=new HashSet<>();
+      for (      final DAGNode subNode : annotationNode.allSubNodes) {
+        subNodes.add(subNode.name);
+      }
+      return subNodes;
+    }
+  }
+;
+  private final LazyMap<String,ArrayList<String>> annotationNameToMetaAnnotationNames=LazyMap.convertToMultiMapSorted(LazyMap.invertMultiSet(metaAnnotationNameToAnnotatedAnnotationNamesSet,annotationNameToAnnotationNode));
+  public List<String> getNamesOfMetaAnnotationsOnAnnotation(  final String annotationName){
+    final ArrayList<String> metaAnnotationNames=annotationNameToMetaAnnotationNames.get(annotationName);
+    if (metaAnnotationNames == null) {
+      return Collections.emptyList();
+    }
+ else {
+      return metaAnnotationNames;
+    }
+  }
+  private final LazyMap<String,ArrayList<String>> metaAnnotationNameToAnnotatedAnnotationNames=LazyMap.convertToMultiMapSorted(metaAnnotationNameToAnnotatedAnnotationNamesSet);
+  public List<String> getNamesOfAnnotationsWithMetaAnnotation(  final String metaAnnotationName){
+    final ArrayList<String> annotationNames=metaAnnotationNameToAnnotatedAnnotationNames.get(metaAnnotationName);
+    if (annotationNames == null) {
+      return Collections.emptyList();
+    }
+ else {
+      return annotationNames;
+    }
+  }
+  private static String label(  final DAGNode node){
+    final String className=node.name;
+    final int dotIdx=className.lastIndexOf('.');
+    if (dotIdx < 0) {
+      return className;
+    }
+    return className.substring(0,dotIdx + 1) + "\\n" + className.substring(dotIdx + 1);
+  }
+  public String generateClassGraphDotFile(  final float sizeX,  final float sizeY){
+    final StringBuilder buf=new StringBuilder();
+    buf.append("digraph {\n");
+    buf.append("size=\"" + sizeX + ","+ sizeY+ "\";\n");
+    buf.append("layout=dot;\n");
+    buf.append("rankdir=\"BT\";\n");
+    buf.append("overlap=false;\n");
+    buf.append("splines=true;\n");
+    buf.append("pack=true;\n");
+    buf.append("\nnode[shape=box,style=filled,fillcolor=\"#fff2b6\"];\n");
+    for (    final DAGNode node : standardClassNodes) {
+      buf.append("  \"" + label(node) + "\"\n");
+    }
+    buf.append("\nnode[shape=diamond,style=filled,fillcolor=\"#b6e7ff\"];\n");
+    for (    final DAGNode node : interfaceNodes) {
+      buf.append("  \"" + label(node) + "\"\n");
+    }
+    buf.append("\nnode[shape=oval,style=filled,fillcolor=\"#f3c9ff\"];\n");
+    for (    final DAGNode node : annotationNodes) {
+      buf.append("  \"" + label(node) + "\"\n");
+    }
+    buf.append("\n");
+    for (    final StandardClassDAGNode classNode : standardClassNodes) {
+      for (      final DAGNode superclassNode : classNode.directSuperNodes) {
+        buf.append("  \"" + label(classNode) + "\" -> \""+ label(superclassNode)+ "\"\n");
+      }
+      for (      final DAGNode implementedInterfaceNode : classNode.implementedInterfaceClassNodes) {
+        buf.append("  \"" + label(classNode) + "\" -> \""+ label(implementedInterfaceNode)+ "\" [arrowhead=diamond]\n");
+      }
+      for (      final DAGNode fieldTypeNode : classNode.whitelistedFieldTypeNodes) {
+        buf.append("  \"" + label(fieldTypeNode) + "\" -> \""+ label(classNode)+ "\" [arrowtail=obox, dir=back]\n");
+      }
+    }
+    for (    final InterfaceDAGNode interfaceNode : interfaceNodes) {
+      for (      final DAGNode superinterfaceNode : interfaceNode.directSuperNodes) {
+        buf.append("  \"" + label(interfaceNode) + "\" -> \""+ label(superinterfaceNode)+ "\" [arrowhead=diamond]\n");
+      }
+    }
+    for (    final AnnotationDAGNode annotationNode : annotationNodes) {
+      for (      final DAGNode metaAnnotationNode : annotationNode.directSuperNodes) {
+        buf.append("  \"" + label(annotationNode) + "\" -> \""+ label(metaAnnotationNode)+ "\" [arrowhead=dot]\n");
+      }
+      for (      final DAGNode annotatedClassNode : annotationNode.annotatedClassNodes) {
+        buf.append("  \"" + label(annotatedClassNode) + "\" -> \""+ label(annotationNode)+ "\" [arrowhead=dot]\n");
+      }
+    }
+    buf.append("}");
+    return buf.toString();
+  }
+}

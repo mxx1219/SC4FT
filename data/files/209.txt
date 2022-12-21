@@ -1,0 +1,63 @@
+package com.hazelcast.client.impl;
+import com.hazelcast.core.ClientType;
+import com.hazelcast.logging.ILogger;
+import com.hazelcast.nio.Connection;
+import com.hazelcast.spi.ExecutionService;
+import com.hazelcast.spi.properties.GroupProperty;
+import com.hazelcast.spi.properties.HazelcastProperties;
+import com.hazelcast.util.Clock;
+import com.hazelcast.util.StringUtil.timeToString;
+import java.util.concurrent.TimeUnit.SECONDS;
+public class ClientHeartbeatMonitor implements Runnable {
+  private static final int HEART_BEAT_CHECK_INTERVAL_SECONDS=10;
+  private static final int DEFAULT_CLIENT_HEARTBEAT_TIMEOUT_SECONDS=60;
+  private final ClientEndpointManager clientEndpointManager;
+  private final long heartbeatTimeoutSeconds;
+  private final ExecutionService executionService;
+  private final ILogger logger;
+  public ClientHeartbeatMonitor(  ClientEndpointManager clientEndpointManager,  ILogger logger,  ExecutionService executionService,  HazelcastProperties hazelcastProperties){
+    this.clientEndpointManager=clientEndpointManager;
+    this.logger=logger;
+    this.executionService=executionService;
+    this.heartbeatTimeoutSeconds=getHeartbeatTimeout(hazelcastProperties);
+  }
+  private long getHeartbeatTimeout(  HazelcastProperties hazelcastProperties){
+    long configuredTimeout=hazelcastProperties.getSeconds(GroupProperty.CLIENT_HEARTBEAT_TIMEOUT_SECONDS);
+    if (configuredTimeout > 0) {
+      return configuredTimeout;
+    }
+    return DEFAULT_CLIENT_HEARTBEAT_TIMEOUT_SECONDS;
+  }
+  public void start(){
+    executionService.scheduleWithRepetition(this,HEART_BEAT_CHECK_INTERVAL_SECONDS,HEART_BEAT_CHECK_INTERVAL_SECONDS,SECONDS);
+  }
+  @Override public void run(){
+    cleanupEndpointsWithDeadConnections();
+    for (    ClientEndpoint clientEndpoint : clientEndpointManager.getEndpoints()) {
+      monitor(clientEndpoint);
+    }
+  }
+  private void cleanupEndpointsWithDeadConnections(){
+    for (    ClientEndpoint endpoint : clientEndpointManager.getEndpoints()) {
+      if (!endpoint.getConnection().isAlive()) {
+        if (logger.isFineEnabled()) {
+          logger.fine("Cleaning up endpoints with dead connection " + endpoint);
+        }
+        clientEndpointManager.removeEndpoint(endpoint);
+      }
+    }
+  }
+  private void monitor(  ClientEndpoint clientEndpoint){
+    if (clientEndpoint.isOwnerConnection() == ClientType.CPP.equals(clientEndpoint.getClientType())) {
+      return;
+    }
+    Connection connection=clientEndpoint.getConnection();
+    long lastTimePacketReceived=connection.lastReadTimeMillis();
+    long timeoutInMillis=SECONDS.toMillis(heartbeatTimeoutSeconds);
+    long currentTimeMillis=Clock.currentTimeMillis();
+    if (lastTimePacketReceived + timeoutInMillis < currentTimeMillis) {
+      String message="Client heartbeat is timed out, closing connection to " + connection + ". Now: "+ timeToString(currentTimeMillis)+ ". LastTimePacketReceived: "+ timeToString(lastTimePacketReceived);
+      connection.close(message,null);
+    }
+  }
+}

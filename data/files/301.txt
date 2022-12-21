@@ -1,0 +1,907 @@
+package org.pentaho.di.trans.steps.textfileinput;
+import java.io.BufferedInputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.ZipInputStream;
+import org.apache.commons.vfs.FileObject;
+import org.pentaho.di.core.Const;
+import org.pentaho.di.core.ResultFile;
+import org.pentaho.di.core.exception.KettleException;
+import org.pentaho.di.core.exception.KettleFileException;
+import org.pentaho.di.core.fileinput.FileInputList;
+import org.pentaho.di.core.logging.LogWriter;
+import org.pentaho.di.core.playlist.FilePlayListAll;
+import org.pentaho.di.core.playlist.FilePlayListReplay;
+import org.pentaho.di.core.row.RowDataUtil;
+import org.pentaho.di.core.row.RowMeta;
+import org.pentaho.di.core.row.RowMetaInterface;
+import org.pentaho.di.core.row.ValueMetaInterface;
+import org.pentaho.di.core.vfs.KettleVFS;
+import org.pentaho.di.trans.Trans;
+import org.pentaho.di.trans.TransMeta;
+import org.pentaho.di.trans.step.BaseStep;
+import org.pentaho.di.trans.step.StepDataInterface;
+import org.pentaho.di.trans.step.StepInterface;
+import org.pentaho.di.trans.step.StepMeta;
+import org.pentaho.di.trans.step.StepMetaInterface;
+import org.pentaho.di.trans.step.errorhandling.AbstractFileErrorHandler;
+import org.pentaho.di.trans.step.errorhandling.CompositeFileErrorHandler;
+import org.pentaho.di.trans.step.errorhandling.FileErrorHandler;
+import org.pentaho.di.trans.step.errorhandling.FileErrorHandlerContentLineNumber;
+import org.pentaho.di.trans.step.errorhandling.FileErrorHandlerMissingFiles;
+public class TextFileInput extends BaseStep implements StepInterface {
+  private static final int BUFFER_SIZE_INPUT_STREAM=500;
+  private static LogWriter log=LogWriter.getInstance();
+  private TextFileInputMeta meta;
+  private TextFileInputData data;
+  private long lineNumberInFile;
+  private TransMeta transmeta;
+  public TextFileInput(  StepMeta stepMeta,  StepDataInterface stepDataInterface,  int copyNr,  TransMeta transMeta,  Trans trans){
+    super(stepMeta,stepDataInterface,copyNr,transMeta,trans);
+    this.transmeta=transMeta;
+  }
+  public static final String getLine(  LogWriter log,  InputStreamReader reader,  int formatNr,  StringBuffer line) throws KettleFileException {
+    int c=0;
+    line.setLength(0);
+    try {
+switch (formatNr) {
+case TextFileInputMeta.FILE_FORMAT_DOS:
+{
+          while (c >= 0) {
+            c=reader.read();
+            if (c == '\r' || c == '\n') {
+              c=reader.read();
+              if (c != '\r' && c != '\n') {
+                throw new KettleFileException("DOS format was specified but only a single line feed character was found, not 2");
+              }
+              return line.toString();
+            }
+            if (c >= 0)             line.append((char)c);
+          }
+        }
+      break;
+case TextFileInputMeta.FILE_FORMAT_UNIX:
+{
+      while (c >= 0) {
+        c=reader.read();
+        if (c == '\n' || c == '\r') {
+          return line.toString();
+        }
+        if (c >= 0)         line.append((char)c);
+      }
+    }
+  break;
+case TextFileInputMeta.FILE_FORMAT_MIXED:
+{
+  while (c >= 0) {
+    c=reader.read();
+    if (c == '\n') {
+      return line.toString();
+    }
+ else     if (c != '\r') {
+      if (c >= 0)       line.append((char)c);
+    }
+  }
+}
+break;
+}
+}
+ catch (KettleFileException e) {
+throw e;
+}
+catch (Exception e) {
+if (line.length() == 0) {
+throw new KettleFileException("Exception reading line: " + e.toString(),e);
+}
+return line.toString();
+}
+if (line.length() > 0) return line.toString();
+return null;
+}
+public static final String[] guessStringsFromLine(String line,TextFileInputMeta inf) throws KettleException {
+List<String> strings=new ArrayList<String>();
+int fieldnr;
+String pol;
+try {
+if (line == null) return null;
+if (inf.getFileType().equalsIgnoreCase("CSV")) {
+fieldnr=0;
+int pos=0;
+int length=line.length();
+boolean dencl=false;
+int len_encl=(inf.getEnclosure() == null ? 0 : inf.getEnclosure().length());
+int len_esc=(inf.getEscapeCharacter() == null ? 0 : inf.getEscapeCharacter().length());
+while (pos < length) {
+int from=pos;
+int next;
+boolean encl_found;
+boolean contains_escaped_enclosures=false;
+boolean contains_escaped_separators=false;
+if (len_encl > 0 && line.substring(from,from + len_encl).equalsIgnoreCase(inf.getEnclosure())) {
+if (log.isRowLevel()) log.logRowlevel("convert line to row","encl substring=[" + line.substring(from,from + len_encl) + "]");
+encl_found=true;
+int p=from + len_encl;
+boolean is_enclosure=len_encl > 0 && p + len_encl < length && line.substring(p,p + len_encl).equalsIgnoreCase(inf.getEnclosure());
+boolean is_escape=len_esc > 0 && p + len_esc < length && line.substring(p,p + len_esc).equalsIgnoreCase(inf.getEscapeCharacter());
+boolean enclosure_after=false;
+if ((is_enclosure || is_escape) && p < length - 1) {
+  String strnext=line.substring(p + len_encl,p + 2 * len_encl);
+  if (strnext.equalsIgnoreCase(inf.getEnclosure())) {
+    p++;
+    enclosure_after=true;
+    dencl=true;
+    if (is_escape)     contains_escaped_enclosures=true;
+  }
+}
+while ((!is_enclosure || enclosure_after) && p < line.length()) {
+  p++;
+  enclosure_after=false;
+  is_enclosure=len_encl > 0 && p + len_encl < length && line.substring(p,p + len_encl).equals(inf.getEnclosure());
+  is_escape=len_esc > 0 && p + len_esc < length && line.substring(p,p + len_esc).equals(inf.getEscapeCharacter());
+  if ((is_enclosure || is_escape) && p < length - 1) {
+    String strnext=line.substring(p + len_encl,p + 2 * len_encl);
+    if (strnext.equals(inf.getEnclosure())) {
+      p++;
+      enclosure_after=true;
+      dencl=true;
+      if (is_escape)       contains_escaped_enclosures=true;
+    }
+  }
+}
+if (p >= length) next=p;
+ else next=p + len_encl;
+if (log.isRowLevel()) log.logRowlevel("convert line to row","End of enclosure @ position " + p);
+}
+ else {
+encl_found=false;
+boolean found=false;
+int startpoint=from;
+int tries=1;
+do {
+  next=line.indexOf(inf.getSeparator(),startpoint);
+  if (len_esc > 0 && next - len_esc > 0) {
+    String before=line.substring(next - len_esc,next);
+    if (inf.getEscapeCharacter().equals(before)) {
+      startpoint=next + 1;
+      tries++;
+      contains_escaped_separators=true;
+    }
+ else {
+      found=true;
+    }
+  }
+ else {
+    found=true;
+  }
+}
+ while (!found && next >= 0);
+}
+if (next == -1) next=length;
+if (encl_found) {
+pol=line.substring(from + len_encl,next - len_encl);
+if (log.isRowLevel()) log.logRowlevel("convert line to row","Enclosed field found: [" + pol + "]");
+}
+ else {
+pol=line.substring(from,next);
+if (log.isRowLevel()) log.logRowlevel("convert line to row","Normal field found: [" + pol + "]");
+}
+if (dencl) {
+StringBuffer sbpol=new StringBuffer(pol);
+int idx=sbpol.indexOf(inf.getEnclosure() + inf.getEnclosure());
+while (idx >= 0) {
+  sbpol.delete(idx,idx + inf.getEnclosure().length());
+  idx=sbpol.indexOf(inf.getEnclosure() + inf.getEnclosure());
+}
+pol=sbpol.toString();
+}
+if (contains_escaped_enclosures) {
+String replace=inf.getEscapeCharacter() + inf.getEnclosure();
+String replaceWith=inf.getEnclosure();
+pol=Const.replace(pol,replace,replaceWith);
+}
+if (contains_escaped_separators) {
+String replace=inf.getEscapeCharacter() + inf.getSeparator();
+String replaceWith=inf.getSeparator();
+pol=Const.replace(pol,replace,replaceWith);
+}
+strings.add(pol);
+pos=next + 1;
+fieldnr++;
+}
+if (pos == length) {
+if (log.isRowLevel()) log.logRowlevel("convert line to row","End of line empty field found: []");
+strings.add("");
+fieldnr++;
+}
+}
+ else {
+for (int i=0; i < inf.getInputFields().length; i++) {
+TextFileInputField field=inf.getInputFields()[i];
+int length=line.length();
+if (field.getPosition() + field.getLength() <= length) {
+strings.add(line.substring(field.getPosition(),field.getPosition() + field.getLength()));
+}
+ else {
+if (field.getPosition() < length) {
+  strings.add(line.substring(field.getPosition()));
+}
+ else {
+  strings.add("");
+}
+}
+}
+}
+}
+ catch (Exception e) {
+throw new KettleException("Error converting line : " + e.toString(),e);
+}
+return strings.toArray(new String[strings.size()]);
+}
+public static final String[] convertLineToStrings(String line,InputFileMetaInterface inf) throws KettleException {
+String[] strings=new String[inf.getInputFields().length];
+int fieldnr;
+String pol;
+try {
+if (line == null) return null;
+if (inf.getFileType().equalsIgnoreCase("CSV")) {
+fieldnr=0;
+int pos=0;
+int length=line.length();
+boolean dencl=false;
+int len_encl=(inf.getEnclosure() == null ? 0 : inf.getEnclosure().length());
+int len_esc=(inf.getEscapeCharacter() == null ? 0 : inf.getEscapeCharacter().length());
+while (pos < length) {
+int from=pos;
+int next;
+boolean encl_found;
+boolean contains_escaped_enclosures=false;
+boolean contains_escaped_separators=false;
+if (len_encl > 0 && line.substring(from,from + len_encl).equalsIgnoreCase(inf.getEnclosure())) {
+if (log.isRowLevel()) log.logRowlevel("convert line to row","encl substring=[" + line.substring(from,from + len_encl) + "]");
+encl_found=true;
+int p=from + len_encl;
+boolean is_enclosure=len_encl > 0 && p + len_encl < length && line.substring(p,p + len_encl).equalsIgnoreCase(inf.getEnclosure());
+boolean is_escape=len_esc > 0 && p + len_esc < length && line.substring(p,p + len_esc).equalsIgnoreCase(inf.getEscapeCharacter());
+boolean enclosure_after=false;
+if ((is_enclosure || is_escape) && p < length - 1) {
+  String strnext=line.substring(p + len_encl,p + 2 * len_encl);
+  if (strnext.equalsIgnoreCase(inf.getEnclosure())) {
+    p++;
+    enclosure_after=true;
+    dencl=true;
+    if (is_escape)     contains_escaped_enclosures=true;
+  }
+}
+while ((!is_enclosure || enclosure_after) && p < line.length()) {
+  p++;
+  enclosure_after=false;
+  is_enclosure=len_encl > 0 && p + len_encl < length && line.substring(p,p + len_encl).equals(inf.getEnclosure());
+  is_escape=len_esc > 0 && p + len_esc < length && line.substring(p,p + len_esc).equals(inf.getEscapeCharacter());
+  if ((is_enclosure || is_escape) && p < length - 1) {
+    String strnext=line.substring(p + len_encl,p + 2 * len_encl);
+    if (strnext.equals(inf.getEnclosure())) {
+      p++;
+      enclosure_after=true;
+      dencl=true;
+      if (is_escape)       contains_escaped_enclosures=true;
+    }
+  }
+}
+if (p >= length) next=p;
+ else next=p + len_encl;
+if (log.isRowLevel()) log.logRowlevel("convert line to row","End of enclosure @ position " + p);
+}
+ else {
+encl_found=false;
+boolean found=false;
+int startpoint=from;
+int tries=1;
+do {
+  next=line.indexOf(inf.getSeparator(),startpoint);
+  if (len_esc > 0 && next - len_esc > 0) {
+    String before=line.substring(next - len_esc,next);
+    if (inf.getEscapeCharacter().equals(before)) {
+      startpoint=next + 1;
+      tries++;
+      contains_escaped_separators=true;
+    }
+ else {
+      found=true;
+    }
+  }
+ else {
+    found=true;
+  }
+}
+ while (!found && next >= 0);
+}
+if (next == -1) next=length;
+if (encl_found) {
+pol=line.substring(from + len_encl,next - len_encl);
+if (log.isRowLevel()) log.logRowlevel("convert line to row","Enclosed field found: [" + pol + "]");
+}
+ else {
+pol=line.substring(from,next);
+if (log.isRowLevel()) log.logRowlevel("convert line to row","Normal field found: [" + pol + "]");
+}
+if (dencl) {
+StringBuffer sbpol=new StringBuffer(pol);
+int idx=sbpol.indexOf(inf.getEnclosure() + inf.getEnclosure());
+while (idx >= 0) {
+  sbpol.delete(idx,idx + inf.getEnclosure().length());
+  idx=sbpol.indexOf(inf.getEnclosure() + inf.getEnclosure());
+}
+pol=sbpol.toString();
+}
+if (contains_escaped_enclosures) {
+String replace=inf.getEscapeCharacter() + inf.getEnclosure();
+String replaceWith=inf.getEnclosure();
+pol=Const.replace(pol,replace,replaceWith);
+}
+if (contains_escaped_separators) {
+String replace=inf.getEscapeCharacter() + inf.getSeparator();
+String replaceWith=inf.getSeparator();
+pol=Const.replace(pol,replace,replaceWith);
+}
+try {
+strings[fieldnr]=pol;
+}
+ catch (ArrayIndexOutOfBoundsException e) {
+String[] newStrings=new String[strings.length];
+for (int x=0; x < strings.length; x++) newStrings[x]=strings[x];
+strings=newStrings;
+}
+pos=next + 1;
+fieldnr++;
+}
+if (pos == length) {
+if (log.isRowLevel()) log.logRowlevel("convert line to row","End of line empty field found: []");
+strings[fieldnr]=Const.EMPTY_STRING;
+fieldnr++;
+}
+}
+ else {
+for (int i=0; i < inf.getInputFields().length; i++) {
+TextFileInputField field=inf.getInputFields()[i];
+int length=line.length();
+if (field.getPosition() + field.getLength() <= length) {
+strings[i]=line.substring(field.getPosition(),field.getPosition() + field.getLength());
+}
+ else {
+if (field.getPosition() < length) {
+  strings[i]=line.substring(field.getPosition());
+}
+ else {
+  strings[i]="";
+}
+}
+}
+}
+}
+ catch (Exception e) {
+throw new KettleException("Error converting line : " + e.toString(),e);
+}
+return strings;
+}
+public static final Object[] convertLineToRow(TextFileLine textFileLine,InputFileMetaInterface info,RowMetaInterface outputRowMeta,RowMetaInterface convertRowMeta,String fname,long rowNr,FileErrorHandler errorHandler) throws KettleException {
+if (textFileLine == null || textFileLine.line == null || textFileLine.line.length() == 0) return null;
+Object[] r=RowDataUtil.allocateRowData(outputRowMeta.size());
+int nrfields=info.getInputFields().length;
+int fieldnr;
+Long errorCount=null;
+if (info.isErrorIgnored() && info.getErrorCountField() != null && info.getErrorCountField().length() > 0) {
+errorCount=new Long(0L);
+}
+String errorFields=null;
+if (info.isErrorIgnored() && info.getErrorFieldsField() != null && info.getErrorFieldsField().length() > 0) {
+errorFields="";
+}
+String errorText=null;
+if (info.isErrorIgnored() && info.getErrorTextField() != null && info.getErrorTextField().length() > 0) {
+errorText="";
+}
+try {
+String[] strings=convertLineToStrings(textFileLine.line,info);
+for (fieldnr=0; fieldnr < nrfields; fieldnr++) {
+TextFileInputField f=info.getInputFields()[fieldnr];
+ValueMetaInterface valueMeta=outputRowMeta.getValueMeta(fieldnr);
+ValueMetaInterface convertMeta=convertRowMeta.getValueMeta(fieldnr);
+Object value;
+String nullif=fieldnr < nrfields ? f.getNullString() : "";
+String ifnull=fieldnr < nrfields ? f.getIfNullValue() : "";
+int trim_type=fieldnr < nrfields ? f.getTrimType() : ValueMetaInterface.TRIM_TYPE_NONE;
+if (fieldnr < strings.length) {
+String pol=strings[fieldnr];
+try {
+value=valueMeta.convertDataFromString(pol,convertMeta,nullif,ifnull,trim_type);
+}
+ catch (Exception e) {
+String message="Couldn't parse field [" + valueMeta.toStringMeta() + "] with value ["+ pol+ "], format ["+ valueMeta.getConversionMask()+ "]";
+if (info.isErrorIgnored()) {
+  LogWriter.getInstance().logBasic(fname,"WARNING: " + message + " : "+ e.getMessage());
+  value=null;
+  if (errorCount != null) {
+    errorCount=new Long(errorCount.longValue() + 1L);
+  }
+  if (errorFields != null) {
+    StringBuffer sb=new StringBuffer(errorFields);
+    if (sb.length() > 0)     sb.append("\t");
+    sb.append(valueMeta.getName());
+    errorFields=sb.toString();
+  }
+  if (errorText != null) {
+    StringBuffer sb=new StringBuffer(errorText);
+    if (sb.length() > 0)     sb.append(Const.CR);
+    sb.append(message);
+    errorText=sb.toString();
+  }
+  if (errorHandler != null) {
+    errorHandler.handleLineError(textFileLine.lineNumber,AbstractFileErrorHandler.NO_PARTS);
+  }
+  if (info.isErrorLineSkipped())   r=null;
+}
+ else {
+  throw new KettleException(message,e);
+}
+}
+}
+ else {
+value=null;
+}
+r[fieldnr]=value;
+}
+if (fieldnr < nrfields) {
+for (int i=fieldnr; i < info.getInputFields().length; i++) {
+r[i]=null;
+}
+}
+int index=nrfields;
+if (errorCount != null) {
+r[index]=errorCount;
+index++;
+}
+if (errorFields != null) {
+r[index]=errorFields;
+index++;
+}
+if (errorText != null) {
+r[index]=errorText;
+index++;
+}
+if (info.includeFilename()) {
+r[index]=fname;
+index++;
+}
+if (info.includeRowNumber()) {
+r[index]=new Long(rowNr);
+index++;
+}
+}
+ catch (Exception e) {
+throw new KettleException("Error converting line",e);
+}
+return r;
+}
+public boolean processRow(StepMetaInterface smi,StepDataInterface sdi) throws KettleException {
+Object[] r=null;
+boolean retval=true;
+boolean putrow=false;
+if (first) {
+first=false;
+data.outputRowMeta=new RowMeta();
+meta.getFields(data.outputRowMeta,getStepname(),null,null,this);
+data.convertRowMeta=data.outputRowMeta.clone();
+for (int i=0; i < data.convertRowMeta.size(); i++) data.convertRowMeta.getValueMeta(i).setType(ValueMetaInterface.TYPE_STRING);
+if (meta.isAcceptingFilenames()) {
+data.files.getFiles().clear();
+int idx=-1;
+data.rowSet=findInputRowSet(meta.getAcceptingStepName());
+Object[] fileRow=getRowFrom(data.rowSet);
+while (fileRow != null) {
+if (idx < 0) {
+idx=data.rowSet.getRowMeta().indexOfValue(meta.getAcceptingField());
+if (idx < 0) {
+  logError(Messages.getString("TextFileInput.Log.Error.UnableToFindFilenameField",meta.getAcceptingField()));
+  setErrors(1);
+  stopAll();
+  return false;
+}
+}
+String fileValue=data.rowSet.getRowMeta().getString(fileRow,idx);
+try {
+FileObject fileObject=KettleVFS.getFileObject(fileValue);
+data.files.addFile(fileObject);
+}
+ catch (IOException e) {
+logError(Messages.getString("TextFileInput.Log.Error.UnableToCreateFileObject",fileValue));
+}
+fileRow=getRowFrom(data.rowSet);
+}
+if (data.files.nrOfFiles() == 0) {
+logBasic(Messages.getString("TextFileInput.Log.Error.NoFilesSpecified"));
+setOutputDone();
+return false;
+}
+}
+handleMissingFiles();
+if (!openNextFile()) {
+closeLastFile();
+setOutputDone();
+return false;
+}
+for (int i=0; i < meta.getInputFields().length; i++) {
+if (meta.getInputFields()[i].isRepeated()) data.nr_repeats++;
+}
+}
+ else {
+if (!data.doneReading) {
+int repeats=1;
+if (meta.isLineWrapped()) repeats=meta.getNrWraps() > 0 ? meta.getNrWraps() : repeats;
+for (int i=0; i < repeats && !data.doneReading; i++) {
+String line=getLine(log,data.isr,data.fileFormatType,data.lineStringBuffer);
+if (line != null) {
+boolean isFilterLastLine=false;
+boolean filterOK=checkFilterRow(line,isFilterLastLine);
+if (filterOK) {
+  data.lineBuffer.add(new TextFileLine(line,lineNumberInFile,data.file));
+}
+ else {
+  if (isFilterLastLine) {
+    data.doneReading=true;
+  }
+  repeats++;
+}
+}
+ else {
+data.doneReading=true;
+}
+}
+}
+}
+while (data.lineBuffer.size() == 0) {
+if (!openNextFile()) {
+closeLastFile();
+setOutputDone();
+return false;
+}
+}
+TextFileLine textLine=(TextFileLine)data.lineBuffer.get(0);
+linesInput++;
+lineNumberInFile++;
+data.lineBuffer.remove(0);
+if (meta.isLayoutPaged()) {
+if (!data.doneWithHeader && data.pageLinesRead == 0) {
+if (log.isRowLevel()) logRowlevel("P-HEADER (" + data.headerLinesRead + ") : "+ textLine.line);
+data.headerLinesRead++;
+if (data.headerLinesRead >= meta.getNrHeaderLines()) {
+data.doneWithHeader=true;
+}
+}
+ else {
+if (data.pageLinesRead < meta.getNrLinesPerPage()) {
+if (meta.isLineWrapped()) {
+for (int i=0; i < meta.getNrWraps(); i++) {
+  String extra="";
+  if (data.lineBuffer.size() > 0) {
+    extra=((TextFileLine)data.lineBuffer.get(0)).line;
+    data.lineBuffer.remove(0);
+  }
+  textLine.line+=extra;
+}
+}
+if (log.isRowLevel()) logRowlevel("P-DATA: " + textLine.line);
+data.pageLinesRead++;
+data.lineInFile++;
+long useNumber=meta.isRowNumberByFile() ? data.lineInFile : linesWritten + 1;
+r=convertLineToRow(textLine,meta,data.outputRowMeta,data.convertRowMeta,data.filename,useNumber,data.dataErrorLineHandler);
+if (r != null) putrow=true;
+}
+ else {
+if (meta.hasFooter() && data.footerLinesRead < meta.getNrFooterLines()) {
+if (log.isRowLevel()) logRowlevel("P-FOOTER: " + textLine.line);
+data.footerLinesRead++;
+}
+if (!meta.hasFooter() || data.footerLinesRead >= meta.getNrFooterLines()) {
+data.doneWithHeader=false;
+data.headerLinesRead=0;
+data.pageLinesRead=0;
+data.footerLinesRead=0;
+if (log.isRowLevel()) logRowlevel("RESTART PAGE");
+}
+}
+}
+}
+ else {
+if (!data.doneWithHeader) {
+data.headerLinesRead++;
+if (data.headerLinesRead >= meta.getNrHeaderLines()) {
+data.doneWithHeader=true;
+}
+}
+ else {
+if (data.doneReading && meta.hasFooter() && data.lineBuffer.size() < meta.getNrFooterLines()) {
+data.lineBuffer.clear();
+}
+ else {
+if (meta.isLineWrapped()) {
+for (int i=0; i < meta.getNrWraps(); i++) {
+  String extra="";
+  if (data.lineBuffer.size() > 0) {
+    extra=((TextFileLine)data.lineBuffer.get(0)).line;
+    data.lineBuffer.remove(0);
+  }
+  textLine.line+=extra;
+}
+}
+if (data.filePlayList.isProcessingNeeded(textLine.file,textLine.lineNumber,AbstractFileErrorHandler.NO_PARTS)) {
+data.lineInFile++;
+long useNumber=meta.isRowNumberByFile() ? data.lineInFile : linesWritten + 1;
+r=convertLineToRow(textLine,meta,data.outputRowMeta,data.convertRowMeta,data.filename,useNumber,data.dataErrorLineHandler);
+if (r != null) {
+  putrow=true;
+}
+}
+ else putrow=false;
+}
+}
+}
+if (putrow && r != null) {
+if (data.nr_repeats > 0) {
+if (data.previous_row == null) {
+data.previous_row=data.outputRowMeta.cloneRow(r);
+}
+ else {
+int repnr=0;
+for (int i=0; i < meta.getInputFields().length; i++) {
+if (meta.getInputFields()[i].isRepeated()) {
+  if (r[i] == null) {
+    r[i]=data.previous_row[i];
+  }
+ else {
+    data.previous_row[i]=r[i];
+  }
+  repnr++;
+}
+}
+}
+}
+if (log.isRowLevel()) logRowlevel("Putting row: " + data.outputRowMeta.getString(r));
+putRow(data.outputRowMeta,r);
+if (linesInput >= meta.getRowLimit() && meta.getRowLimit() > 0) {
+closeLastFile();
+setOutputDone();
+return false;
+}
+}
+if (checkFeedback(linesInput)) logBasic("linenr " + linesInput);
+return retval;
+}
+private boolean checkFilterRow(String line,boolean isFilterLastLine){
+boolean filterOK=true;
+if (meta.noEmptyLines() && line.length() == 0) {
+filterOK=false;
+}
+ else {
+filterOK=data.filterProcessor.doFilters(line);
+if (!filterOK) {
+if (data.filterProcessor.isStopProcessing()) {
+data.doneReading=true;
+}
+}
+}
+return filterOK;
+}
+private void handleMissingFiles() throws KettleException {
+List<FileObject> nonExistantFiles=data.files.getNonExistantFiles();
+if (nonExistantFiles.size() != 0) {
+String message=FileInputList.getRequiredFilesDescription(nonExistantFiles);
+log.logBasic("Required files","WARNING: Missing " + message);
+if (meta.isErrorIgnored()) {
+for (FileObject fileObject : nonExistantFiles) {
+data.dataErrorLineHandler.handleNonExistantFile(fileObject);
+}
+}
+ else {
+throw new KettleException("Following required files are missing: " + message);
+}
+}
+List<FileObject> nonAccessibleFiles=data.files.getNonAccessibleFiles();
+if (nonAccessibleFiles.size() != 0) {
+String message=FileInputList.getRequiredFilesDescription(nonAccessibleFiles);
+log.logBasic("Required files","WARNING: Not accessible " + message);
+if (meta.isErrorIgnored()) {
+for (FileObject fileObject : nonAccessibleFiles) {
+data.dataErrorLineHandler.handleNonAccessibleFile(fileObject);
+}
+}
+ else {
+throw new KettleException("Following required files are not accessible: " + message);
+}
+}
+}
+private boolean closeLastFile(){
+try {
+if (data.filename != null) {
+String sFileCompression=meta.getFileCompression();
+if (sFileCompression != null && sFileCompression.equals("Zip")) {
+data.zi.closeEntry();
+data.zi.close();
+}
+ else if (sFileCompression != null && sFileCompression.equals("GZip")) {
+data.gzi.close();
+}
+data.fr.close();
+data.isr.close();
+data.filename=null;
+if (data.file != null) {
+data.file.close();
+data.file=null;
+}
+}
+data.dataErrorLineHandler.close();
+}
+ catch (Exception e) {
+logError("Couldn't close file : " + data.filename + " --> "+ e.toString());
+stopAll();
+setErrors(1);
+return false;
+}
+ finally {
+System.gc();
+}
+return !data.isLastFile;
+}
+private boolean openNextFile(){
+try {
+lineNumberInFile=0;
+if (!closeLastFile()) return false;
+if (data.files.nrOfFiles() == 0) return false;
+data.isLastFile=(data.filenr == data.files.nrOfFiles() - 1);
+data.file=data.files.getFile(data.filenr);
+data.filename=KettleVFS.getFilename(data.file);
+data.lineInFile=0;
+ResultFile resultFile=new ResultFile(ResultFile.FILE_TYPE_GENERAL,data.file,getTransMeta().getName(),toString());
+addResultFile(resultFile);
+logBasic("Opening file: " + data.filename);
+data.fr=KettleVFS.getInputStream(data.file);
+data.dataErrorLineHandler.handleFile(data.file);
+String sFileCompression=meta.getFileCompression();
+if (sFileCompression != null && sFileCompression.equals("Zip")) {
+logBasic("This is a zipped file");
+data.zi=new ZipInputStream(data.fr);
+data.zi.getNextEntry();
+if (meta.getEncoding() != null && meta.getEncoding().length() > 0) {
+data.isr=new InputStreamReader(new BufferedInputStream(data.zi,BUFFER_SIZE_INPUT_STREAM),meta.getEncoding());
+}
+ else {
+data.isr=new InputStreamReader(new BufferedInputStream(data.zi,BUFFER_SIZE_INPUT_STREAM));
+}
+}
+ else if (sFileCompression != null && sFileCompression.equals("GZip")) {
+logBasic("This is a gzipped file");
+data.gzi=new GZIPInputStream(data.fr);
+if (meta.getEncoding() != null && meta.getEncoding().length() > 0) {
+data.isr=new InputStreamReader(new BufferedInputStream(data.gzi,BUFFER_SIZE_INPUT_STREAM),meta.getEncoding());
+}
+ else {
+data.isr=new InputStreamReader(new BufferedInputStream(data.gzi,BUFFER_SIZE_INPUT_STREAM));
+}
+}
+ else {
+if (meta.getEncoding() != null && meta.getEncoding().length() > 0) {
+data.isr=new InputStreamReader(new BufferedInputStream(data.fr,BUFFER_SIZE_INPUT_STREAM),meta.getEncoding());
+}
+ else {
+data.isr=new InputStreamReader(new BufferedInputStream(data.fr,BUFFER_SIZE_INPUT_STREAM));
+}
+}
+data.filenr++;
+data.doneReading=false;
+int bufferSize=1;
+bufferSize+=meta.hasHeader() ? meta.getNrHeaderLines() : 0;
+bufferSize+=meta.isLayoutPaged() ? meta.getNrLinesPerPage() : 0;
+bufferSize+=meta.hasFooter() ? meta.getNrFooterLines() : 0;
+if (meta.isLayoutPaged()) {
+for (int i=0; i < meta.getNrLinesDocHeader(); i++) {
+getLine(log,data.isr,data.fileFormatType,data.lineStringBuffer);
+lineNumberInFile++;
+}
+}
+String line;
+for (int i=0; i < bufferSize && !data.doneReading; i++) {
+line=getLine(log,data.isr,data.fileFormatType,data.lineStringBuffer);
+if (line != null) {
+if (!meta.hasHeader()) {
+boolean isFilterLastLine=false;
+boolean filterOK=checkFilterRow(line,isFilterLastLine);
+if (filterOK) {
+  data.lineBuffer.add(new TextFileLine(line,lineNumberInFile,data.file));
+}
+ else {
+  bufferSize++;
+}
+}
+ else {
+if (!meta.noEmptyLines() || line.length() != 0) {
+  data.lineBuffer.add(new TextFileLine(line,lineNumberInFile,data.file));
+}
+}
+}
+ else {
+data.doneReading=true;
+}
+}
+data.headerLinesRead=0;
+data.footerLinesRead=0;
+data.pageLinesRead=0;
+data.doneWithHeader=!meta.hasHeader();
+}
+ catch (Exception e) {
+logError("Couldn't open file #" + data.filenr + " : "+ data.filename+ " --> "+ e.toString());
+stopAll();
+setErrors(1);
+return false;
+}
+return true;
+}
+public boolean init(StepMetaInterface smi,StepDataInterface sdi){
+meta=(TextFileInputMeta)smi;
+data=(TextFileInputData)sdi;
+if (super.init(smi,sdi)) {
+initErrorHandling();
+initReplayFactory();
+data.files=meta.getTextFileList(getTransMeta());
+data.filterProcessor=new TextFileFilterProcessor(meta.getFilter());
+if ((transmeta.getPreviousResult() == null || transmeta.getPreviousResult().getResultFiles() == null || transmeta.getPreviousResult().getResultFiles().size() == 0) && data.files.nrOfMissingFiles() > 0 && !meta.isAcceptingFilenames() && !meta.isErrorIgnored()) {
+logError(Messages.getString("TextFileInput.Log.Error.NoFilesSpecified"));
+return false;
+}
+String nr=getVariable(Const.INTERNAL_VARIABLE_SLAVE_SERVER_NUMBER);
+if (!Const.isEmpty(nr)) {
+logBasic("Running on slave server #" + nr + " : assuming that each slave reads a dedicated part of the same file(s).");
+}
+data.fileFormatType=meta.getFileFormatTypeNr();
+data.fileType=meta.getFileTypeNr();
+return true;
+}
+return false;
+}
+private void initReplayFactory(){
+Date replayDate=getTrans().getReplayDate();
+if (replayDate == null) data.filePlayList=FilePlayListAll.INSTANCE;
+ else data.filePlayList=new FilePlayListReplay(replayDate,meta.getLineNumberFilesDestinationDirectory(),meta.getLineNumberFilesExtension(),meta.getErrorFilesDestinationDirectory(),meta.getErrorLineFilesExtension(),meta.getEncoding());
+}
+private void initErrorHandling(){
+List<FileErrorHandler> dataErrorLineHandlers=new ArrayList<FileErrorHandler>(2);
+if (meta.getLineNumberFilesDestinationDirectory() != null) dataErrorLineHandlers.add(new FileErrorHandlerContentLineNumber(getTrans().getCurrentDate(),meta.getLineNumberFilesDestinationDirectory(),meta.getLineNumberFilesExtension(),meta.getEncoding(),this));
+if (meta.getErrorFilesDestinationDirectory() != null) dataErrorLineHandlers.add(new FileErrorHandlerMissingFiles(getTrans().getCurrentDate(),meta.getErrorFilesDestinationDirectory(),meta.getErrorLineFilesExtension(),meta.getEncoding(),this));
+data.dataErrorLineHandler=new CompositeFileErrorHandler(dataErrorLineHandlers);
+}
+public void dispose(StepMetaInterface smi,StepDataInterface sdi){
+meta=(TextFileInputMeta)smi;
+data=(TextFileInputData)sdi;
+super.dispose(smi,sdi);
+System.gc();
+}
+public void run(){
+try {
+logBasic(Messages.getString("System.Log.StartingToRun"));
+while (processRow(meta,data) && !isStopped()) ;
+}
+ catch (Throwable t) {
+logError(Messages.getString("System.Log.UnexpectedError") + " : ");
+logError(Const.getStackTracker(t));
+setErrors(1);
+stopAll();
+}
+ finally {
+dispose(meta,data);
+logSummary();
+markStop();
+}
+}
+}

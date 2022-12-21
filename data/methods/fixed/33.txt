@@ -1,0 +1,9 @@
+@Override public void addClusterToIndex(final String clusterName,final String indexName){
+  final OIndex<?> index=indexes.get(indexName.toLowerCase());
+  if (index == null)   throw new OIndexException("Index with name " + indexName + " does not exist.");
+  if (index.getInternal() == null)   throw new OIndexException("Index with name " + indexName + " has no internal presentation.");
+  if (!index.getInternal().getClusters().contains(clusterName)) {
+    index.getInternal().addCluster(clusterName);
+    save();
+  }
+}

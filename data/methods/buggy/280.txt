@@ -1,0 +1,12 @@
+public DockerAccessWithHcClient(String apiVersion,String baseUrl,String certPath,int maxConnections,Logger log) throws IOException {
+  this.log=log;
+  URI uri=URI.create(baseUrl);
+  if (uri.getScheme().equalsIgnoreCase("unix")) {
+    this.delegate=new ApacheHttpClientDelegate(new UnixSocketClientBuilder().build(uri.getPath(),maxConnections));
+    this.urlBuilder=new UrlBuilder(DUMMY_BASE_URL,apiVersion);
+  }
+ else {
+    this.delegate=new ApacheHttpClientDelegate(new HttpClientBuilder(isSSL(baseUrl) ? certPath : null).build(maxConnections));
+    this.urlBuilder=new UrlBuilder(baseUrl,apiVersion);
+  }
+}

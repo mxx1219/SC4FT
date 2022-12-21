@@ -1,0 +1,10 @@
+public ObjectAnimationModifier(Ipo ipo,String objectAnimationName,Long objectOMA,BlenderContext blenderContext) throws BlenderFileException {
+  int fps=blenderContext.getBlenderKey().getFps();
+  SpatialTrack track=(SpatialTrack)ipo.calculateTrack(-1,0,ipo.getLastFrame(),fps,true);
+  Animation animation=new Animation(objectAnimationName,ipo.getLastFrame() / (float)fps);
+  animation.setTracks(new SpatialTrack[]{track});
+  ArrayList<Animation> animations=new ArrayList<Animation>(1);
+  animations.add(animation);
+  animData=new AnimData(null,animations);
+  blenderContext.setAnimData(objectOMA,animData);
+}

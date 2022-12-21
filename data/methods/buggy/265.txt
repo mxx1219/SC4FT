@@ -1,0 +1,13 @@
+public KieModule addKieModule(Resource resource,Resource... dependencies){
+  log.info("Adding KieModule from resource: " + resource);
+  KieModule kModule=getKieModule(resource);
+  if (dependencies != null && dependencies.length > 0) {
+    for (    Resource depRes : dependencies) {
+      InternalKieModule depKModule=(InternalKieModule)getKieModule(depRes);
+      ((InternalKieModule)kModule).addKieDependency(depKModule);
+      log.info("Adding KieModule dependency from resource: " + resource);
+    }
+  }
+  addKieModule(kModule);
+  return kModule;
+}

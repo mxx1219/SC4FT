@@ -1,0 +1,186 @@
+package android.taobao.atlas.util;
+import java.io.BufferedInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.security.PublicKey;
+import java.security.cert.Certificate;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
+import java.util.zip.ZipFile;
+import android.taobao.atlas.hack.AssertionArrayException;
+import android.taobao.atlas.hack.AtlasHacks;
+import android.taobao.atlas.runtime.RuntimeVariables;
+import android.taobao.atlas.util.log.impl.AtlasMonitor;
+public class ApkUtils {
+  final static int SYSTEM_ROOT_STATE_UNKNOW=-1;
+  final static int SYSTEM_ROOT_STATE_DISABLE=0;
+  final static int SYSTEM_ROOT_STATE_ENABLE=1;
+  private static ZipFile sApkZip;
+  public static ZipFile getApk(){
+    if (sApkZip == null) {
+      loadZip();
+    }
+    return sApkZip;
+  }
+  private static synchronized void loadZip(){
+    if (sApkZip != null) {
+      return;
+    }
+    try {
+      sApkZip=new ZipFile(RuntimeVariables.androidApplication.getApplicationInfo().sourceDir);
+    }
+ catch (    Throwable e) {
+      e.printStackTrace();
+    }
+  }
+  public static final String[] getApkPublicKey(  String apkPath){
+    JarFile jarFile=null;
+    try {
+      jarFile=new JarFile(apkPath);
+      final JarEntry je=jarFile.getJarEntry("classes.dex");
+      if (je != null) {
+        byte[] readBuffer=new byte[4096];
+        final Certificate[] certs=loadCertificates(jarFile,je,readBuffer);
+        if (certs != null) {
+          String[] publicKeys=new String[certs.length];
+          for (int i=0; i < certs.length; i++) {
+            Certificate cert=certs[i];
+            PublicKey publicKey=cert.getPublicKey();
+            publicKeys[i]=bytesToHexString(publicKey.getEncoded());
+          }
+          return publicKeys;
+        }
+      }
+    }
+ catch (    IOException e) {
+    }
+ finally {
+      if (jarFile != null) {
+        try {
+          jarFile.close();
+        }
+ catch (        IOException e) {
+          e.printStackTrace();
+        }
+      }
+    }
+    return null;
+  }
+  private static Certificate[] loadCertificates(  JarFile jarFile,  JarEntry je,  byte[] readBuffer){
+    try {
+      InputStream is=new BufferedInputStream(jarFile.getInputStream(je));
+      while (is.read(readBuffer,0,readBuffer.length) != -1) {
+      }
+      is.close();
+      return je != null ? je.getCertificates() : null;
+    }
+ catch (    IOException e) {
+      e.printStackTrace();
+    }
+catch (    RuntimeException e) {
+      e.printStackTrace();
+    }
+    return null;
+  }
+  private static final String bytesToHexString(  byte[] src){
+    StringBuilder stringBuilder=new StringBuilder();
+    if (src == null || src.length <= 0) {
+      return null;
+    }
+    for (int i=0; i < src.length; i++) {
+      int v=src[i] & 0xFF;
+      String hv=Integer.toHexString(v);
+      if (hv.length() < 2) {
+        stringBuilder.append(0);
+      }
+      stringBuilder.append(hv);
+    }
+    return stringBuilder.toString();
+  }
+  public static final void chmod(  File file){
+    if (file != null && !file.exists()) {
+      file.mkdirs();
+      try {
+        String command="chmod 555 " + file.getAbsolutePath();
+        Runtime runtime=Runtime.getRuntime();
+        runtime.exec(command);
+      }
+ catch (      Exception e) {
+        e.printStackTrace();
+      }
+    }
+  }
+  private static int systemRootState=SYSTEM_ROOT_STATE_UNKNOW;
+  public static boolean isRootSystem(){
+    if (systemRootState != SYSTEM_ROOT_STATE_UNKNOW) {
+      return systemRootState == SYSTEM_ROOT_STATE_ENABLE;
+    }
+    final String suSearchPaths[]={"/system/bin/","/system/xbin/","/system/sbin/","/sbin/","/vendor/bin/"};
+    for (    String searchPath : suSearchPaths) {
+      File file=new File(searchPath,"su");
+      if (file.exists()) {
+        systemRootState=SYSTEM_ROOT_STATE_ENABLE;
+        return true;
+      }
+    }
+    return false;
+  }
+  public static void copyDirectory(  File sourceDir,  File targetDir) throws Exception {
+    File[] files=sourceDir.listFiles();
+    for (    File childFile : files) {
+      if (childFile.isFile()) {
+        File dir=new File(targetDir.getAbsolutePath());
+        if (!dir.exists()) {
+          dir.mkdirs();
+        }
+        copyInputStreamToFile(new FileInputStream(childFile),new File(dir,childFile.getName()));
+      }
+ else {
+        copyDirectory(childFile,new File(targetDir,childFile.getName()));
+      }
+    }
+  }
+  public static void copyInputStreamToFile(  InputStream input,  File file) throws IOException {
+    FileOutputStream os=null;
+    FileChannel channel=null;
+    try {
+      os=new FileOutputStream(file);
+      channel=os.getChannel();
+      byte[] buffers=new byte[1024];
+      int realLength;
+      while ((realLength=input.read(buffers)) > 0) {
+        channel.write(ByteBuffer.wrap(buffers,0,realLength));
+      }
+    }
+ catch (    IOException e) {
+      AtlasMonitor.getInstance().report(AtlasMonitor.CONTAINER_BUNDLE_SOURCE_UNZIP_FAIL,null,e);
+      throw new IOException(e);
+    }
+ finally {
+      if (input != null)       try {
+        input.close();
+      }
+ catch (      Exception e) {
+        e.printStackTrace();
+      }
+      if (channel != null)       try {
+        channel.close();
+      }
+ catch (      Exception e) {
+        e.printStackTrace();
+      }
+      if (os != null)       try {
+        os.close();
+      }
+ catch (      Exception e) {
+        e.printStackTrace();
+      }
+    }
+  }
+}

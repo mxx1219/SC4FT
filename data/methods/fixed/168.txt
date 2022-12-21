@@ -1,0 +1,60 @@
+private void balanceByWeights(){
+  final AllocationDeciders deciders=allocation.deciders();
+  final ModelNode[] modelNodes=sorter.modelNodes;
+  final float[] weights=sorter.weights;
+  for (  String index : buildWeightOrderedIndices()) {
+    IndexMetaData indexMetaData=metaData.index(index);
+    int relevantNodes=0;
+    for (int i=0; i < modelNodes.length; i++) {
+      ModelNode modelNode=modelNodes[i];
+      if (modelNode.getIndex(index) != null || deciders.canAllocate(indexMetaData,modelNode.getRoutingNode(),allocation).type() != Type.NO) {
+        modelNodes[i]=modelNodes[relevantNodes];
+        modelNodes[relevantNodes]=modelNode;
+        relevantNodes++;
+      }
+    }
+    if (relevantNodes < 2) {
+      continue;
+    }
+    sorter.reset(index,0,relevantNodes);
+    int lowIdx=0;
+    int highIdx=relevantNodes - 1;
+    while (true) {
+      final ModelNode minNode=modelNodes[lowIdx];
+      final ModelNode maxNode=modelNodes[highIdx];
+      advance_range:       if (maxNode.numShards(index) > 0) {
+        final float delta=absDelta(weights[lowIdx],weights[highIdx]);
+        if (lessThan(delta,threshold)) {
+          if (lowIdx > 0 && highIdx - 1 > 0 && (absDelta(weights[0],weights[highIdx - 1]) > threshold)) {
+            break advance_range;
+          }
+          if (logger.isTraceEnabled()) {
+            logger.trace("Stop balancing index [{}]  min_node [{}] weight: [{}]" + "  max_node [{}] weight: [{}]  delta: [{}]",index,maxNode.getNodeId(),weights[highIdx],minNode.getNodeId(),weights[lowIdx],delta);
+          }
+          break;
+        }
+        if (logger.isTraceEnabled()) {
+          logger.trace("Balancing from node [{}] weight: [{}] to node [{}] weight: [{}]  delta: [{}]",maxNode.getNodeId(),weights[highIdx],minNode.getNodeId(),weights[lowIdx],delta);
+        }
+        if (tryRelocateShard(minNode,maxNode,index,delta)) {
+          weights[lowIdx]=sorter.weight(modelNodes[lowIdx]);
+          weights[highIdx]=sorter.weight(modelNodes[highIdx]);
+          sorter.sort(0,relevantNodes);
+          lowIdx=0;
+          highIdx=relevantNodes - 1;
+          continue;
+        }
+      }
+      if (lowIdx < highIdx - 1) {
+        lowIdx++;
+      }
+ else       if (lowIdx > 0) {
+        lowIdx=0;
+        highIdx--;
+      }
+ else {
+        break;
+      }
+    }
+  }
+}

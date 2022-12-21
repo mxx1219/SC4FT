@@ -1,0 +1,18 @@
+private Map<NPC,String> buildNpcsToHighlight(){
+  String configNpcs=config.getNpcToHighlight().toLowerCase();
+  if (configNpcs.isEmpty())   return Collections.EMPTY_MAP;
+  Map<NPC,String> npcMap=new HashMap<>();
+  List<String> highlightedNpcs=Arrays.asList(configNpcs.split(DELIMITER_REGEX));
+  for (  NPC npc : client.getNpcs()) {
+    String npcName=npc.getName();
+    if (npcName == null) {
+      continue;
+    }
+    for (    String highlight : highlightedNpcs) {
+      if (WildcardMatcher.matches(highlight,npcName)) {
+        npcMap.put(npc,npcName);
+      }
+    }
+  }
+  return npcMap;
+}

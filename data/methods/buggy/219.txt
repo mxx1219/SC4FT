@@ -1,0 +1,18 @@
+private String formatMemory(final long bytes){
+  final long KB=1024;
+  final long MB=KB * KB;
+  final long GB=KB * MB;
+  final NumberFormat formatter=NumberFormat.getInstance();
+  formatter.setMaximumFractionDigits(2);
+  String formattedUsedMemory;
+  if (bytes > GB) {
+    formattedUsedMemory=formatter.format(bytes / GB) + " GB";
+  }
+ else   if (bytes > MB) {
+    formattedUsedMemory=formatter.format(bytes / MB) + " MB";
+  }
+ else {
+    formattedUsedMemory=formatter.format(bytes / KB) + " KB";
+  }
+  return formattedUsedMemory;
+}

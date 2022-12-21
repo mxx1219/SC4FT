@@ -1,0 +1,38 @@
+@Override Request getRequest(ParseHttpRequest parseRequest) throws IOException {
+  Request.Builder okHttpRequestBuilder=new Request.Builder();
+  ParseHttpRequest.Method method=parseRequest.getMethod();
+switch (method) {
+case GET:
+    okHttpRequestBuilder.get();
+  break;
+case DELETE:
+okHttpRequestBuilder.delete();
+break;
+case POST:
+case PUT:
+break;
+default :
+throw new IllegalStateException("Unsupported http method " + method.toString());
+}
+okHttpRequestBuilder.url(parseRequest.getUrl());
+Headers.Builder okHttpHeadersBuilder=new Headers.Builder();
+for (Map.Entry<String,String> entry : parseRequest.getAllHeaders().entrySet()) {
+okHttpHeadersBuilder.add(entry.getKey(),entry.getValue());
+}
+Headers okHttpHeaders=okHttpHeadersBuilder.build();
+okHttpRequestBuilder.headers(okHttpHeaders);
+ParseHttpBody parseBody=parseRequest.getBody();
+ParseOkHttpRequestBody okHttpRequestBody=null;
+if (parseBody != null) {
+okHttpRequestBody=new ParseOkHttpRequestBody(parseBody);
+}
+switch (method) {
+case PUT:
+okHttpRequestBuilder.put(okHttpRequestBody);
+break;
+case POST:
+okHttpRequestBuilder.post(okHttpRequestBody);
+break;
+}
+return okHttpRequestBuilder.build();
+}

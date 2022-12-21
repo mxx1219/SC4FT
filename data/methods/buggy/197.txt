@@ -1,0 +1,6 @@
+@Nullable public byte[] getServiceData(ParcelUuid serviceDataUuid){
+  if (serviceDataUuid == null) {
+    return null;
+  }
+  return mServiceData.get(serviceDataUuid);
+}

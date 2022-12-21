@@ -1,0 +1,50 @@
+private static void downloadMessage(Context context,boolean metered,EntityFolder folder,IMAPFolder ifolder,IMAPMessage imessage,long id) throws MessagingException, IOException {
+  SharedPreferences prefs=PreferenceManager.getDefaultSharedPreferences(context);
+  long download=prefs.getInt("download",32768);
+  if (download == 0)   download=Long.MAX_VALUE;
+  DB db=DB.getInstance(context);
+  EntityMessage message=db.message().getMessage(id);
+  if (message == null)   return;
+  List<EntityAttachment> attachments=db.attachment().getAttachments(message.id);
+  MessageHelper helper=new MessageHelper(imessage);
+  if (message.setContactInfo(context))   db.message().updateMessage(message);
+  boolean fetch=false;
+  if (!message.content)   if (!metered || (message.size != null && message.size < download))   fetch=true;
+  if (!fetch)   for (  EntityAttachment attachment : attachments)   if (!attachment.available)   if (!metered || (attachment.size != null && attachment.size < download)) {
+    fetch=true;
+    break;
+  }
+  if (fetch) {
+    Log.i(Helper.TAG,folder.name + " fetching message id=" + message.id);
+    FetchProfile fp=new FetchProfile();
+    fp.add(FetchProfile.Item.ENVELOPE);
+    fp.add(FetchProfile.Item.FLAGS);
+    fp.add(FetchProfile.Item.CONTENT_INFO);
+    fp.add(UIDFolder.FetchProfileItem.UID);
+    fp.add(IMAPFolder.FetchProfileItem.HEADERS);
+    fp.add(IMAPFolder.FetchProfileItem.MESSAGE);
+    fp.add(FetchProfile.Item.SIZE);
+    fp.add(IMAPFolder.FetchProfileItem.INTERNALDATE);
+    ifolder.fetch(new Message[]{imessage},fp);
+  }
+  if (!message.content)   if (!metered || (message.size != null && message.size < download)) {
+    String html=helper.getHtml();
+    String text=(html == null ? null : Jsoup.parse(html).text());
+    String preview=(text == null ? null : text.substring(0,Math.min(text.length(),PREVIEW_SIZE)));
+    message.write(context,html);
+    db.message().setMessageContent(message.id,true,preview);
+    Log.i(Helper.TAG,folder.name + " downloaded message id=" + message.id+ " size="+ message.size);
+  }
+  List<EntityAttachment> iattachments=null;
+  for (int i=0; i < attachments.size(); i++) {
+    EntityAttachment attachment=attachments.get(i);
+    if (!attachment.available)     if (!metered || (attachment.size != null && attachment.size < download)) {
+      if (iattachments == null)       iattachments=helper.getAttachments();
+      if (i < iattachments.size()) {
+        attachment.part=iattachments.get(i).part;
+        attachment.download(context,db);
+        Log.i(Helper.TAG,folder.name + " downloaded message id=" + message.id+ " attachment="+ attachment.name+ " size="+ message.size);
+      }
+    }
+  }
+}

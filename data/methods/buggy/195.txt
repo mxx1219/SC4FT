@@ -1,0 +1,15 @@
+public static MethodMessageHandlerInspector getInstance(Class<?> handlerClass,ParameterResolverFactory parameterResolverFactory,boolean allowDuplicates,HandlerDefinition<? super Method> handlerDefinition){
+  String key=handlerDefinition.toString() + "@" + handlerClass.getName();
+  MethodMessageHandlerInspector inspector=INSPECTORS.get(key);
+  while (inspector == null || !inspector.parameterResolver.equals(parameterResolverFactory)) {
+    final MethodMessageHandlerInspector newInspector=new MethodMessageHandlerInspector(parameterResolverFactory,handlerClass,allowDuplicates,handlerDefinition);
+    if (inspector == null) {
+      INSPECTORS.putIfAbsent(key,newInspector);
+    }
+ else {
+      INSPECTORS.replace(key,inspector,newInspector);
+    }
+    inspector=INSPECTORS.get(key);
+  }
+  return inspector;
+}

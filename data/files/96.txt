@@ -1,0 +1,43 @@
+package com.a.eye.skywalking.protocol.util;
+import com.a.eye.skywalking.conf.Config;
+import com.a.eye.skywalking.model.ContextData;
+import com.a.eye.skywalking.context.CurrentThreadSpanStack;
+import com.a.eye.skywalking.model.Identification;
+import com.a.eye.skywalking.model.Span;
+public final class ContextGenerator {
+  public static Span generateSpanFromThreadLocal(  Identification id){
+    Span spanData=getSpanFromThreadLocal();
+    spanData.setStartDate(System.currentTimeMillis());
+    spanData.setViewPointId(id.getViewPoint());
+    return spanData;
+  }
+  public static Span generateSpanFromContextData(  ContextData context,  Identification id){
+    Span spanData=CurrentThreadSpanStack.peek();
+    if (context != null && !StringUtil.isEmpty(context.getTraceId()) && spanData == null) {
+      spanData=new Span(context.getTraceId(),context.getParentLevel(),context.getLevelId(),Config.SkyWalking.APPLICATION_CODE,Config.SkyWalking.USER_ID);
+    }
+ else {
+      spanData=getSpanFromThreadLocal();
+    }
+    spanData.setStartDate(System.currentTimeMillis());
+    spanData.setViewPointId(id.getViewPoint());
+    return spanData;
+  }
+  private static Span getSpanFromThreadLocal(){
+    Span span;
+    final Span parentSpan=CurrentThreadSpanStack.peek();
+    if (parentSpan == null) {
+      span=new Span(TraceIdGenerator.generate(),Config.SkyWalking.APPLICATION_CODE,Config.SkyWalking.USER_ID);
+    }
+ else {
+      span=new Span(parentSpan.getTraceId(),Config.SkyWalking.APPLICATION_CODE,Config.SkyWalking.USER_ID);
+      if (!StringUtil.isEmpty(parentSpan.getParentLevel())) {
+        span.setParentLevel(parentSpan.getParentLevel() + "." + parentSpan.getLevelId());
+      }
+ else {
+        span.setParentLevel(String.valueOf(parentSpan.getLevelId()));
+      }
+    }
+    return span;
+  }
+}

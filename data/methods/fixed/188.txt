@@ -1,0 +1,9 @@
+private static String expression(Annotation annotation){
+  try {
+    Method expressionMethod=annotation.getClass().getMethod("value");
+    return (String)Invoker.invoke(annotation,expressionMethod);
+  }
+ catch (  NoSuchMethodException e) {
+    throw new IllegalStateException(e);
+  }
+}

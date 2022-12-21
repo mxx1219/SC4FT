@@ -1,0 +1,3 @@
+public static Object getGroovyObjectProperty(Class senderClass,GroovyObject receiver,String messageName) throws Throwable {
+  return receiver.getProperty(messageName);
+}

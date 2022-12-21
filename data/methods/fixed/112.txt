@@ -1,0 +1,10 @@
+@Subscribe public void buildFinished(BuildEvent.Finished finished){
+synchronized (this) {
+    if (buildStatusFuture != null) {
+      buildStatusFuture.cancel(false);
+      buildStatusFuture=null;
+    }
+  }
+  resetBuildState(null);
+  streamingWebSocketServlet.tellClients(finished);
+}

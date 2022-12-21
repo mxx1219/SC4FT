@@ -1,0 +1,51 @@
+public MaryData process(MaryData d) throws Exception {
+  Pattern p=Pattern.compile(MaryConstants.PUNCT_POS_REGEXP);
+  Document doc=d.getDocument();
+  NodeIterator it=MaryDomUtils.createNodeIterator(doc,doc,MaryXML.TOKEN);
+  Element t=null;
+  while ((t=(Element)it.nextNode()) != null) {
+    String text;
+    if (t.hasAttribute("ph") && !t.getAttribute("ph").contains("*")) {
+      continue;
+    }
+    if (t.hasAttribute("sounds_like"))     text=t.getAttribute("sounds_like");
+ else     text=MaryDomUtils.tokenText(t);
+    String pos=null;
+    boolean is_punct=false;
+    if (t.hasAttribute("pos")) {
+      pos=t.getAttribute("pos");
+      Matcher m=p.matcher(pos);
+      if (m.find()) {
+        is_punct=true;
+      }
+    }
+    if (text != null && !text.equals("") && !is_punct) {
+      StringBuilder ph=new StringBuilder();
+      String g2pMethod=null;
+      StringTokenizer st=new StringTokenizer(text," -");
+      while (st.hasMoreTokens()) {
+        String graph=st.nextToken();
+        StringBuilder helper=new StringBuilder();
+        String phon=phonemise(graph,pos,helper);
+        if (phon == null) {
+          continue;
+        }
+        if (ph.length() == 0) {
+          g2pMethod=helper.toString();
+          ph.append(phon);
+        }
+ else {
+          ph.append(" - ");
+          ph.append(phon.replace('\'',','));
+        }
+      }
+      if (ph != null && ph.length() > 0) {
+        setPh(t,ph.toString());
+        t.setAttribute("g2p_method",g2pMethod);
+      }
+    }
+  }
+  MaryData result=new MaryData(outputType(),d.getLocale());
+  result.setDocument(doc);
+  return result;
+}

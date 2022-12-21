@@ -1,0 +1,36 @@
+public DocumentMapper(MapperService mapperService,Mapping mapping){
+  this.mapperService=mapperService;
+  this.type=mapping.root().name();
+  final IndexSettings indexSettings=mapperService.getIndexSettings();
+  this.mapping=mapping;
+  this.documentParser=new DocumentParser(indexSettings,mapperService.documentMapperParser(),this);
+  List<ObjectMapper> newObjectMappers=new ArrayList<>();
+  List<FieldMapper> newFieldMappers=new ArrayList<>();
+  List<FieldAliasMapper> newFieldAliasMappers=new ArrayList<>();
+  for (  MetadataFieldMapper metadataMapper : this.mapping.metadataMappers) {
+    if (metadataMapper != null) {
+      newFieldMappers.add(metadataMapper);
+    }
+  }
+  MapperUtils.collect(this.mapping.root,newObjectMappers,newFieldMappers,newFieldAliasMappers);
+  final IndexAnalyzers indexAnalyzers=mapperService.getIndexAnalyzers();
+  this.fieldMappers=new DocumentFieldMappers(newFieldMappers,newFieldAliasMappers,indexAnalyzers.getDefaultIndexAnalyzer(),indexAnalyzers.getDefaultSearchAnalyzer(),indexAnalyzers.getDefaultSearchQuoteAnalyzer());
+  Map<String,ObjectMapper> builder=new HashMap<>();
+  for (  ObjectMapper objectMapper : newObjectMappers) {
+    ObjectMapper previous=builder.put(objectMapper.fullPath(),objectMapper);
+    if (previous != null) {
+      throw new IllegalStateException("duplicate key " + objectMapper.fullPath() + " encountered");
+    }
+  }
+  this.objectMappers=Collections.unmodifiableMap(builder);
+  try {
+    mappingSource=new CompressedXContent(this,XContentType.JSON,ToXContent.EMPTY_PARAMS);
+  }
+ catch (  Exception e) {
+    throw new ElasticsearchGenerationException("failed to serialize source for type [" + type + "]",e);
+  }
+  final Collection<String> deleteTombstoneMetadataFields=Arrays.asList(VersionFieldMapper.NAME,IdFieldMapper.NAME,SeqNoFieldMapper.NAME,SeqNoFieldMapper.PRIMARY_TERM_NAME,SeqNoFieldMapper.TOMBSTONE_NAME);
+  this.deleteTombstoneMetadataFieldMappers=Stream.of(mapping.metadataMappers).filter(null).toArray(null);
+  final Collection<String> noopTombstoneMetadataFields=Arrays.asList(VersionFieldMapper.NAME,SeqNoFieldMapper.NAME,SeqNoFieldMapper.PRIMARY_TERM_NAME,SeqNoFieldMapper.TOMBSTONE_NAME);
+  this.noopTombstoneMetadataFieldMappers=Stream.of(mapping.metadataMappers).filter(null).toArray(null);
+}

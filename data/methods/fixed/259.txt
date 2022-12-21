@@ -1,0 +1,47 @@
+private void updateBackgroundBounds(){
+  mBackgroundBounds.left=(int)getX();
+  mBackgroundBounds.right=(int)(getX() + getWidth());
+  if (!mIsExpanded) {
+    mBackgroundBounds.top=0;
+    mBackgroundBounds.bottom=0;
+    return;
+  }
+  ActivatableNotificationView firstView=mFirstVisibleBackgroundChild;
+  int top=0;
+  if (firstView != null) {
+    int finalTranslationY=(int)StackStateAnimator.getFinalTranslationY(firstView);
+    if (mAnimateNextBackgroundTop || mTopAnimator == null && mCurrentBounds.top == finalTranslationY || mTopAnimator != null && mEndAnimationRect.top == finalTranslationY) {
+      top=finalTranslationY;
+    }
+ else {
+      top=(int)firstView.getTranslationY();
+    }
+  }
+  ActivatableNotificationView lastView=mLastVisibleBackgroundChild;
+  int bottom=0;
+  if (lastView != null) {
+    int finalTranslationY=(int)StackStateAnimator.getFinalTranslationY(lastView);
+    int finalHeight=StackStateAnimator.getFinalActualHeight(lastView);
+    int finalBottom=finalTranslationY + finalHeight;
+    finalBottom=Math.min(finalBottom,getHeight());
+    if (mAnimateNextBackgroundBottom || mBottomAnimator == null && mCurrentBounds.bottom == finalBottom || mBottomAnimator != null && mEndAnimationRect.bottom == finalBottom) {
+      bottom=finalBottom;
+    }
+ else {
+      bottom=(int)(lastView.getTranslationY() + lastView.getActualHeight());
+      bottom=Math.min(bottom,getHeight());
+    }
+  }
+ else {
+    top=mTopPadding;
+    bottom=top;
+  }
+  if (mPhoneStatusBar.getBarState() != StatusBarState.KEYGUARD) {
+    top=(int)Math.max(mTopPadding + mStackTranslation,top);
+  }
+ else {
+    top=Math.max(0,top);
+  }
+  mBackgroundBounds.top=top;
+  mBackgroundBounds.bottom=Math.min(getHeight(),Math.max(bottom,top));
+}

@@ -1,0 +1,51 @@
+private ExecutedBatch internalBatchExecute(){
+  if (!getBinding().isEmpty()) {
+    add();
+  }
+  if (bindings.isEmpty()) {
+    throw new IllegalStateException("No batch parts to execute");
+  }
+  String renderedSql=getConfig(SqlStatements.class).getTemplateEngine().render(getSql(),getContext());
+  getContext().setRenderedSql(renderedSql);
+  ParsedSql parsedSql=getConfig(SqlStatements.class).getSqlParser().parse(renderedSql,getContext());
+  String sql=parsedSql.getSql();
+  ParsedParameters parsedParameters=parsedSql.getParameters();
+  getContext().setParsedSql(sql);
+  try {
+    final PreparedStatement stmt;
+    try {
+      StatementBuilder statementBuilder=getHandle().getStatementBuilder();
+      Connection connection=getHandle().getConnection();
+      stmt=statementBuilder.create(connection,sql,getContext());
+      addCleanable(null);
+    }
+ catch (    SQLException e) {
+      throw new UnableToCreateStatementException(e,getContext());
+    }
+    try {
+      for (      Binding binding : bindings) {
+        ArgumentBinder.bind(parsedParameters,binding,stmt,getContext());
+        stmt.addBatch();
+      }
+    }
+ catch (    SQLException e) {
+      throw new UnableToExecuteStatementException("Exception while binding parameters",e,getContext());
+    }
+    beforeExecution(stmt);
+    try {
+      final long start=System.nanoTime();
+      final int[] rs=stmt.executeBatch();
+      final long elapsedTime=System.nanoTime() - start;
+      LOG.trace("Prepared batch of {} parts executed in {}ms",bindings.size(),elapsedTime / 1000000L,parsedSql);
+      getConfig(SqlStatements.class).getTimingCollector().collect(elapsedTime,getContext());
+      afterExecution(stmt);
+      return new ExecutedBatch(stmt,rs);
+    }
+ catch (    SQLException e) {
+      throw new UnableToExecuteStatementException(Batch.mungeBatchException(e),getContext());
+    }
+  }
+  finally {
+    bindings.clear();
+  }
+}

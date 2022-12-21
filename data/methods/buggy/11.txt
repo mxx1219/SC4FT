@@ -1,0 +1,15 @@
+public void startBenchMark() throws InterruptedException {
+  prepareEventStore();
+  long start=System.currentTimeMillis();
+  List<Thread> threads=new ArrayList<Thread>();
+  for (int t=0; t < getThreadCount(); t++) {
+    Thread thread=new Thread(getRunnableInstance());
+    thread.start();
+    threads.add(thread);
+  }
+  for (  Thread thread : threads) {
+    thread.join();
+  }
+  long end=System.currentTimeMillis();
+  System.out.println(String.format("Result: %s threads concurrently wrote %s * %s events each in %s milliseconds. That is an average of %.0f events per second",getThreadCount(),getTransactionCount(),getTransactionSize(),(end - start),(((float)getThreadCount() * getTransactionCount() * getTransactionSize()) / ((float)(end - start) / 1000))));
+}

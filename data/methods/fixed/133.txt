@@ -1,0 +1,19 @@
+public TARGET setSubFileName(List<String> subTaskFileName){
+  if (subTaskFileName == null || subTaskFileName.isEmpty())   return (TARGET)this;
+  mSubTaskFileName.addAll(subTaskFileName);
+  if (mUrls.size() != subTaskFileName.size()) {
+    throw new IllegalArgumentException("下载链接数必须要和保存路径的数量一致");
+  }
+  if (isSetDirPathed) {
+    List<DownloadEntity> entities=mEntity.getSubTask();
+    int i=0;
+    for (    DownloadEntity entity : entities) {
+      if (i < mSubTaskFileName.size()) {
+        String newName=mSubTaskFileName.get(i);
+        updateSubFileName(entity,newName);
+      }
+      i++;
+    }
+  }
+  return (TARGET)this;
+}

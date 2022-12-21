@@ -1,0 +1,13 @@
+@Test public void testTableWidget(){
+  TagContext ctx=Tags.context();
+  setupMockExchange(ctx);
+  Items items=Model.beanItemsInfer(new Person("John",20),new Person("Rambo",50));
+  Tag<?> table=BootstrapWidgets.grid(items,null,10);
+  print(ctx,table);
+  hasRegex(ctx,table,"<th[^>]*?>Name</th>");
+  hasRegex(ctx,table,"<th[^>]*?>Age</th>");
+  hasRegex(ctx,table,"<td[^>]*?>John</td>");
+  hasRegex(ctx,table,"<td[^>]*?>20</td>");
+  hasRegex(ctx,table,"<td[^>]*?>Rambo</td>");
+  hasRegex(ctx,table,"<td[^>]*?>50</td>");
+}

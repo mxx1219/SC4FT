@@ -1,0 +1,268 @@
+package io.bitsquare.gui.main.offer.createoffer;
+import com.google.common.util.concurrent.FutureCallback;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.SettableFuture;
+import com.google.inject.Inject;
+import io.bitsquare.arbitration.Arbitrator;
+import io.bitsquare.btc.*;
+import io.bitsquare.btc.blockchain.BlockchainService;
+import io.bitsquare.btc.listeners.BalanceListener;
+import io.bitsquare.btc.pricefeed.PriceFeed;
+import io.bitsquare.common.UserThread;
+import io.bitsquare.common.crypto.KeyRing;
+import io.bitsquare.gui.common.model.ActivatableDataModel;
+import io.bitsquare.gui.main.overlays.notifications.Notification;
+import io.bitsquare.gui.main.overlays.popups.Popup;
+import io.bitsquare.gui.main.overlays.windows.WalletPasswordWindow;
+import io.bitsquare.gui.util.BSFormatter;
+import io.bitsquare.locale.TradeCurrency;
+import io.bitsquare.p2p.P2PService;
+import io.bitsquare.payment.*;
+import io.bitsquare.trade.handlers.TransactionResultHandler;
+import io.bitsquare.trade.offer.Offer;
+import io.bitsquare.trade.offer.OpenOfferManager;
+import io.bitsquare.user.Preferences;
+import io.bitsquare.user.User;
+import javafx.beans.property.*;
+import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
+import javafx.collections.SetChangeListener;
+import org.bitcoinj.core.Coin;
+import org.bitcoinj.core.Transaction;
+import org.bitcoinj.utils.ExchangeRate;
+import org.bitcoinj.utils.Fiat;
+import org.jetbrains.annotations.NotNull;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+import com.google.common.base.Preconditions.checkNotNull;
+class CreateOfferDataModel extends ActivatableDataModel {
+  private final OpenOfferManager openOfferManager;
+  private final WalletService walletService;
+  private final TradeWalletService tradeWalletService;
+  private final Preferences preferences;
+  private final User user;
+  private final KeyRing keyRing;
+  private final P2PService p2PService;
+  private final PriceFeed priceFeed;
+  private final WalletPasswordWindow walletPasswordWindow;
+  private final BlockchainService blockchainService;
+  private final BSFormatter formatter;
+  private final String offerId;
+  private final AddressEntry addressEntry;
+  private final Coin offerFeeAsCoin;
+  private final Coin networkFeeAsCoin;
+  private final Coin securityDepositAsCoin;
+  private final BalanceListener balanceListener;
+  private final SetChangeListener<PaymentAccount> paymentAccountsChangeListener;
+  private Offer.Direction direction;
+  private TradeCurrency tradeCurrency;
+  final StringProperty tradeCurrencyCode=new SimpleStringProperty();
+  final StringProperty btcCode=new SimpleStringProperty();
+  final BooleanProperty isWalletFunded=new SimpleBooleanProperty();
+  final BooleanProperty useMBTC=new SimpleBooleanProperty();
+  final ObjectProperty<Coin> feeFromFundingTxProperty=new SimpleObjectProperty(Coin.NEGATIVE_SATOSHI);
+  final ObjectProperty<Coin> amountAsCoin=new SimpleObjectProperty<>();
+  final ObjectProperty<Coin> minAmountAsCoin=new SimpleObjectProperty<>();
+  final ObjectProperty<Fiat> priceAsFiat=new SimpleObjectProperty<>();
+  final ObjectProperty<Fiat> volumeAsFiat=new SimpleObjectProperty<>();
+  final ObjectProperty<Coin> totalToPayAsCoin=new SimpleObjectProperty<>();
+  final ObservableList<PaymentAccount> paymentAccounts=FXCollections.observableArrayList();
+  PaymentAccount paymentAccount;
+  private boolean isTabSelected;
+  private Notification walletFundedNotification;
+  @Inject CreateOfferDataModel(  OpenOfferManager openOfferManager,  WalletService walletService,  TradeWalletService tradeWalletService,  Preferences preferences,  User user,  KeyRing keyRing,  P2PService p2PService,  PriceFeed priceFeed,  WalletPasswordWindow walletPasswordWindow,  BlockchainService blockchainService,  BSFormatter formatter){
+    this.openOfferManager=openOfferManager;
+    this.walletService=walletService;
+    this.tradeWalletService=tradeWalletService;
+    this.preferences=preferences;
+    this.user=user;
+    this.keyRing=keyRing;
+    this.p2PService=p2PService;
+    this.priceFeed=priceFeed;
+    this.walletPasswordWindow=walletPasswordWindow;
+    this.blockchainService=blockchainService;
+    this.formatter=formatter;
+    offerId=UUID.randomUUID().toString();
+    addressEntry=walletService.getAddressEntryByOfferId(offerId);
+    offerFeeAsCoin=FeePolicy.getCreateOfferFee();
+    networkFeeAsCoin=FeePolicy.getFixedTxFeeForTrades();
+    securityDepositAsCoin=FeePolicy.getSecurityDeposit();
+    balanceListener=new BalanceListener(getAddressEntry().getAddress()){
+      @Override public void onBalanceChanged(      Coin balance,      Transaction tx){
+        updateBalance(balance);
+        if (preferences.getBitcoinNetwork() == BitcoinNetwork.MAINNET) {
+          SettableFuture<Coin> future=blockchainService.requestFee(tx.getHashAsString());
+          Futures.addCallback(future,new FutureCallback<Coin>(){
+            public void onSuccess(            Coin fee){
+              UserThread.execute(null);
+            }
+            public void onFailure(            @NotNull Throwable throwable){
+              UserThread.execute(null);
+            }
+          }
+);
+        }
+ else {
+          feeFromFundingTxProperty.set(FeePolicy.getMinRequiredFeeForFundingTx());
+        }
+      }
+    }
+;
+    paymentAccountsChangeListener=null;
+  }
+  @Override protected void activate(){
+    addBindings();
+    addListeners();
+    paymentAccounts.setAll(user.getPaymentAccounts());
+    updateBalance(walletService.getBalanceForAddress(getAddressEntry().getAddress()));
+    if (direction == Offer.Direction.BUY)     calculateTotalToPay();
+    if (isTabSelected)     priceFeed.setCurrencyCode(tradeCurrencyCode.get());
+  }
+  @Override protected void deactivate(){
+    removeBindings();
+    removeListeners();
+  }
+  private void addBindings(){
+    btcCode.bind(preferences.btcDenominationProperty());
+  }
+  private void removeBindings(){
+    btcCode.unbind();
+  }
+  private void addListeners(){
+    walletService.addBalanceListener(balanceListener);
+    user.getPaymentAccountsAsObservable().addListener(paymentAccountsChangeListener);
+  }
+  private void removeListeners(){
+    walletService.removeBalanceListener(balanceListener);
+    user.getPaymentAccountsAsObservable().removeListener(paymentAccountsChangeListener);
+  }
+  void initWithData(  Offer.Direction direction,  TradeCurrency tradeCurrency){
+    this.direction=direction;
+    this.tradeCurrency=tradeCurrency;
+    tradeCurrencyCode.set(tradeCurrency.getCode());
+    PaymentAccount account=user.findFirstPaymentAccountWithCurrency(tradeCurrency);
+    if (account != null)     paymentAccount=account;
+    priceFeed.setCurrencyCode(tradeCurrencyCode.get());
+  }
+  void onTabSelected(  boolean isSelected){
+    this.isTabSelected=isSelected;
+    if (isTabSelected)     priceFeed.setCurrencyCode(tradeCurrencyCode.get());
+  }
+  Offer createAndGetOffer(){
+    long fiatPrice=priceAsFiat.get() != null ? priceAsFiat.get().getValue() : 0L;
+    long amount=amountAsCoin.get() != null ? amountAsCoin.get().getValue() : 0L;
+    long minAmount=minAmountAsCoin.get() != null ? minAmountAsCoin.get().getValue() : 0L;
+    ArrayList<String> acceptedCountryCodes=null;
+    if (paymentAccount instanceof SepaAccount) {
+      acceptedCountryCodes=new ArrayList<>();
+      acceptedCountryCodes.addAll(((SepaAccount)paymentAccount).getAcceptedCountryCodes());
+    }
+ else     if (paymentAccount instanceof CountryBasedPaymentAccount) {
+      acceptedCountryCodes=new ArrayList<>();
+      acceptedCountryCodes.add(((CountryBasedPaymentAccount)paymentAccount).getCountry().code);
+    }
+    ArrayList<String> acceptedBanks=null;
+    if (paymentAccount instanceof SpecificBanksAccount) {
+      acceptedBanks=new ArrayList<>(((SpecificBanksAccount)paymentAccount).getAcceptedBanks());
+    }
+ else     if (paymentAccount instanceof SameBankAccount) {
+      acceptedBanks=new ArrayList<>();
+      acceptedBanks.add(((SameBankAccount)paymentAccount).getBankId());
+    }
+    String bankId=paymentAccount instanceof BankAccount ? ((BankAccount)paymentAccount).getBankId() : null;
+    String countryCode=paymentAccount instanceof CountryBasedPaymentAccount ? ((CountryBasedPaymentAccount)paymentAccount).getCountry().code : null;
+    checkNotNull(p2PService.getAddress(),"Address must not be null");
+    return new Offer(offerId,p2PService.getAddress(),keyRing.getPubKeyRing(),direction,fiatPrice,amount,minAmount,tradeCurrencyCode.get(),new ArrayList<>(user.getAcceptedArbitratorAddresses()),paymentAccount.getPaymentMethod().getId(),paymentAccount.getId(),countryCode,acceptedCountryCodes,bankId,acceptedBanks);
+  }
+  void onPlaceOffer(  Offer offer,  TransactionResultHandler resultHandler){
+    if (walletService.getWallet().isEncrypted() && tradeWalletService.getAesKey() == null) {
+      walletPasswordWindow.onAesKey(null).show();
+    }
+ else {
+      doPlaceOffer(offer,resultHandler);
+    }
+  }
+  private void doPlaceOffer(  Offer offer,  TransactionResultHandler resultHandler){
+    openOfferManager.placeOffer(offer,resultHandler);
+  }
+  public void onPaymentAccountSelected(  PaymentAccount paymentAccount){
+    if (paymentAccount != null)     this.paymentAccount=paymentAccount;
+  }
+  public void onCurrencySelected(  TradeCurrency tradeCurrency){
+    if (tradeCurrency != null) {
+      this.tradeCurrency=tradeCurrency;
+      String code=tradeCurrency.getCode();
+      tradeCurrencyCode.set(code);
+      paymentAccount.setSelectedTradeCurrency(tradeCurrency);
+      priceFeed.setCurrencyCode(code);
+    }
+  }
+  @SuppressWarnings("BooleanMethodIsAlwaysInverted") boolean isMinAmountLessOrEqualAmount(){
+    if (minAmountAsCoin.get() != null && amountAsCoin.get() != null)     return !minAmountAsCoin.get().isGreaterThan(amountAsCoin.get());
+    return true;
+  }
+  Offer.Direction getDirection(){
+    return direction;
+  }
+  String getOfferId(){
+    return offerId;
+  }
+  AddressEntry getAddressEntry(){
+    return addressEntry;
+  }
+  public TradeCurrency getTradeCurrency(){
+    return tradeCurrency;
+  }
+  public PaymentAccount getPaymentAccount(){
+    return paymentAccount;
+  }
+  boolean hasAcceptedArbitrators(){
+    return user.getAcceptedArbitrators().size() > 0;
+  }
+  boolean isFeeFromFundingTxSufficient(){
+    return feeFromFundingTxProperty.get().compareTo(FeePolicy.getMinRequiredFeeForFundingTx()) >= 0;
+  }
+  void calculateVolume(){
+    if (priceAsFiat.get() != null && amountAsCoin.get() != null && !amountAsCoin.get().isZero() && !priceAsFiat.get().isZero()) {
+      volumeAsFiat.set(new ExchangeRate(priceAsFiat.get()).coinToFiat(amountAsCoin.get()));
+    }
+  }
+  void calculateAmount(){
+    if (volumeAsFiat.get() != null && priceAsFiat.get() != null && !volumeAsFiat.get().isZero() && !priceAsFiat.get().isZero()) {
+      amountAsCoin.set(formatter.reduceTo4Decimals(new ExchangeRate(priceAsFiat.get()).fiatToCoin(volumeAsFiat.get())));
+      calculateTotalToPay();
+    }
+  }
+  void calculateTotalToPay(){
+    if (securityDepositAsCoin != null) {
+      if (direction == Offer.Direction.BUY)       totalToPayAsCoin.set(offerFeeAsCoin.add(networkFeeAsCoin).add(securityDepositAsCoin));
+ else       totalToPayAsCoin.set(offerFeeAsCoin.add(networkFeeAsCoin).add(securityDepositAsCoin).add(amountAsCoin.get() == null ? Coin.ZERO : amountAsCoin.get()));
+    }
+  }
+  private void updateBalance(  Coin balance){
+    isWalletFunded.set(totalToPayAsCoin.get() != null && balance.compareTo(totalToPayAsCoin.get()) >= 0);
+    if (isWalletFunded.get()) {
+      walletService.removeBalanceListener(balanceListener);
+      if (walletFundedNotification == null) {
+        walletFundedNotification=new Notification().headLine("Trading wallet update").notification("Your trading wallet is sufficiently funded.\n" + "Amount: " + formatter.formatCoinWithCode(totalToPayAsCoin.get())).autoClose();
+        walletFundedNotification.show();
+      }
+    }
+  }
+  public Coin getOfferFeeAsCoin(){
+    return offerFeeAsCoin;
+  }
+  public Coin getNetworkFeeAsCoin(){
+    return networkFeeAsCoin;
+  }
+  public Coin getSecurityDepositAsCoin(){
+    return securityDepositAsCoin;
+  }
+  public List<Arbitrator> getArbitrators(){
+    return user.getAcceptedArbitrators();
+  }
+  public Preferences getPreferences(){
+    return preferences;
+  }
+}

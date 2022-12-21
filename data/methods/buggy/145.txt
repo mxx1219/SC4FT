@@ -1,0 +1,57 @@
+public Job unmarshall(JsonUnmarshallerContext context) throws Exception {
+  Job job=new Job();
+  int originalDepth=context.getCurrentDepth();
+  String currentParentElement=context.getCurrentParentElement();
+  int targetDepth=originalDepth + 1;
+  JsonToken token=context.currentToken;
+  if (token == null)   token=context.nextToken();
+  if (token == VALUE_NULL)   return null;
+  while (true) {
+    if (token == null)     break;
+    if (token == FIELD_NAME || token == START_OBJECT) {
+      if (context.testExpression("Id",targetDepth)) {
+        context.nextToken();
+        job.setId(StringJsonUnmarshaller.getInstance().unmarshall(context));
+      }
+      if (context.testExpression("Arn",targetDepth)) {
+        context.nextToken();
+        job.setArn(StringJsonUnmarshaller.getInstance().unmarshall(context));
+      }
+      if (context.testExpression("PipelineId",targetDepth)) {
+        context.nextToken();
+        job.setPipelineId(StringJsonUnmarshaller.getInstance().unmarshall(context));
+      }
+      if (context.testExpression("Input",targetDepth)) {
+        context.nextToken();
+        job.setInput(JobInputJsonUnmarshaller.getInstance().unmarshall(context));
+      }
+      if (context.testExpression("Output",targetDepth)) {
+        context.nextToken();
+        job.setOutput(JobOutputJsonUnmarshaller.getInstance().unmarshall(context));
+      }
+      if (context.testExpression("Outputs",targetDepth)) {
+        context.nextToken();
+        job.setOutputs(new ListUnmarshaller<JobOutput>(JobOutputJsonUnmarshaller.getInstance()).unmarshall(context));
+      }
+      if (context.testExpression("OutputKeyPrefix",targetDepth)) {
+        context.nextToken();
+        job.setOutputKeyPrefix(StringJsonUnmarshaller.getInstance().unmarshall(context));
+      }
+      if (context.testExpression("Playlists",targetDepth)) {
+        context.nextToken();
+        job.setPlaylists(new ListUnmarshaller<Playlist>(PlaylistJsonUnmarshaller.getInstance()).unmarshall(context));
+      }
+      if (context.testExpression("Status",targetDepth)) {
+        context.nextToken();
+        job.setStatus(StringJsonUnmarshaller.getInstance().unmarshall(context));
+      }
+    }
+ else     if (token == END_ARRAY || token == END_OBJECT) {
+      if (context.getLastParsedParentElement() == null || context.getLastParsedParentElement().equals(currentParentElement)) {
+        if (context.getCurrentDepth() <= originalDepth)         break;
+      }
+    }
+    token=context.nextToken();
+  }
+  return job;
+}

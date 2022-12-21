@@ -1,0 +1,23 @@
+@Override void monitor(ServiceEmitter serviceEmitter){
+  long numEntries=0;
+  long size=0;
+  expungeCollectedCaches();
+  for (  WeakReference<ConcurrentMap<String,String>> cacheRef : caches) {
+    final Map<String,String> cache=cacheRef.get();
+    if (cache == null) {
+      continue;
+    }
+    numEntries+=cache.size();
+    for (    Map.Entry<String,String> sEntry : cache.entrySet()) {
+      final String key=sEntry.getKey();
+      final String value=sEntry.getValue();
+      if (key == null || value == null) {
+        LOG.debug("Missing entries for cache key");
+        continue;
+      }
+      size+=key.length() + value.length();
+    }
+  }
+  serviceEmitter.emit(ServiceMetricEvent.builder().build("namespace/cache/numEntries",numEntries));
+  serviceEmitter.emit(ServiceMetricEvent.builder().build("namespace/cache/heapSizeInBytes",size * Character.BYTES));
+}

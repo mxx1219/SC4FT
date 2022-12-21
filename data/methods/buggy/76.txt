@@ -1,0 +1,13 @@
+public RegexMatchResult(boolean matches,MatchResult matchResult,List<String> groupNames){
+  this.matches=matches;
+  ImmutableMap.Builder<String,String> builder=ImmutableMap.<String,String>builder();
+  if (matches) {
+    final int groupCount=matchResult.groupCount();
+    for (int i=1; i <= groupCount; i++) {
+      final String groupValue=matchResult.group(i);
+      final String groupName=Iterables.get(groupNames,i - 1,null);
+      builder.put(groupName != null ? groupName : String.valueOf(i - 1),groupValue);
+    }
+  }
+  groups=builder.build();
+}

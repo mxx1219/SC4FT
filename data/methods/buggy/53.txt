@@ -1,0 +1,22 @@
+@Override public void commit(){
+  structuralLock.lock();
+  for (  ReentrantReadWriteLock l : locks)   l.writeLock().lock();
+  try {
+    log.ensureAvailable(logSize + 17 + 17+ 1);
+    walIndexVal(logSize,IO_PHYS_SIZE,physSize);
+    logSize+=17;
+    walIndexVal(logSize,IO_INDEX_SIZE,indexSize);
+    logSize+=17;
+    log.putByte(logSize,WAL_SEAL);
+    logSize+=1;
+    log.sync();
+    log.putLong(8,LOG_SEAL);
+    log.sync();
+    replayLogFile();
+    reloadIndexFile();
+  }
+  finally {
+    for (    ReentrantReadWriteLock l : locks)     l.writeLock().unlock();
+    structuralLock.unlock();
+  }
+}

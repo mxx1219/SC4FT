@@ -1,0 +1,44 @@
+private void adjustBranchTargets(){
+  Instruction insn=this.sentinel.next;
+  while (insn != null) {
+    if (insn instanceof Instruction_branch) {
+      Instruction_branch binsn=(Instruction_branch)insn;
+      Instruction newtgt=(Instruction)replacedInsns.get(binsn.target);
+      if (newtgt != null) {
+        binsn.target=newtgt;
+        newtgt.labelled=true;
+      }
+    }
+ else     if (insn instanceof Instruction_Lookupswitch) {
+      Instruction_Lookupswitch switchinsn=(Instruction_Lookupswitch)insn;
+      Instruction newdefault=(Instruction)replacedInsns.get(switchinsn.default_inst);
+      if (newdefault != null) {
+        switchinsn.default_inst=newdefault;
+        newdefault.labelled=true;
+      }
+      for (int i=0; i < switchinsn.npairs; i++) {
+        Instruction newtgt=(Instruction)replacedInsns.get(switchinsn.match_insts[i]);
+        if (newtgt != null) {
+          switchinsn.match_insts[i]=newtgt;
+          newtgt.labelled=true;
+        }
+      }
+    }
+ else     if (insn instanceof Instruction_Tableswitch) {
+      Instruction_Tableswitch switchinsn=(Instruction_Tableswitch)insn;
+      Instruction newdefault=(Instruction)replacedInsns.get(switchinsn.default_inst);
+      if (newdefault != null) {
+        switchinsn.default_inst=newdefault;
+        newdefault.labelled=true;
+      }
+      for (int i=0; i < switchinsn.high - switchinsn.low; i++) {
+        Instruction newtgt=(Instruction)replacedInsns.get(switchinsn.jump_insts[i]);
+        if (newtgt != null) {
+          switchinsn.jump_insts[i]=newtgt;
+          newtgt.labelled=true;
+        }
+      }
+    }
+    insn=insn.next;
+  }
+}

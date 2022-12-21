@@ -1,0 +1,66 @@
+@Override protected String handleObjectPost(Object object) throws Exception {
+  String workspace=getAttribute("workspace");
+  String dataStore=getAttribute("datastore");
+  FeatureTypeInfo featureType=(FeatureTypeInfo)object;
+  if (featureType.getStore() != null) {
+    if (!dataStore.equals(featureType.getStore().getName())) {
+      throw new RestletException("Expected datastore " + dataStore + " but client specified "+ featureType.getStore().getName(),Status.CLIENT_ERROR_FORBIDDEN);
+    }
+  }
+ else {
+    featureType.setStore(catalog.getDataStoreByName(workspace,dataStore));
+  }
+  if (featureType.getNamespace() != null) {
+    if (!workspace.equals(featureType.getNamespace().getPrefix())) {
+      throw new RestletException("Expected workspace " + workspace + " but client specified "+ featureType.getNamespace().getPrefix(),Status.CLIENT_ERROR_FORBIDDEN);
+    }
+  }
+ else {
+    featureType.setNamespace(catalog.getNamespaceByPrefix(workspace));
+  }
+  featureType.setEnabled(true);
+  DataStoreInfo ds=catalog.getDataStoreByName(workspace,dataStore);
+  if (ds.getDataStore(null) instanceof DataStore) {
+    String typeName=featureType.getName();
+    if (featureType.getNativeName() != null) {
+      typeName=featureType.getNativeName();
+    }
+    boolean typeExists=false;
+    DataStore gtds=(DataStore)ds.getDataStore(null);
+    for (    String name : gtds.getTypeNames()) {
+      if (name.equals(typeName)) {
+        typeExists=true;
+        break;
+      }
+    }
+    MetadataMap mdm=featureType.getMetadata();
+    boolean virtual=mdm != null && mdm.containsKey(FeatureTypeInfo.JDBC_VIRTUAL_TABLE);
+    if (!virtual && !typeExists) {
+      gtds.createSchema(buildFeatureType(featureType));
+      featureType.getAttributes().clear();
+      List<String> typeNames=Arrays.asList(gtds.getTypeNames());
+      if (!typeNames.contains(typeName) && typeNames.contains(typeName.toUpperCase())) {
+        featureType.setNativeName(featureType.getName().toLowerCase());
+      }
+    }
+  }
+  CatalogBuilder cb=new CatalogBuilder(catalog);
+  cb.initFeatureType(featureType);
+  if (featureType.getStore() == null) {
+    featureType.setStore(ds);
+  }
+  NamespaceInfo ns=featureType.getNamespace();
+  if (ns != null && !ns.getPrefix().equals(workspace)) {
+    LOGGER.warning("Namespace: " + ns.getPrefix() + " does not match workspace: "+ workspace+ ", overriding.");
+    ns=null;
+  }
+  if (ns == null) {
+    ns=catalog.getNamespaceByPrefix(workspace);
+    featureType.setNamespace(ns);
+  }
+  featureType.setEnabled(true);
+  catalog.add(featureType);
+  catalog.add(new CatalogBuilder(catalog).buildLayer(featureType));
+  LOGGER.info("POST feature type" + dataStore + ","+ featureType.getName());
+  return featureType.getName();
+}

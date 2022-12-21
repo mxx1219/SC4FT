@@ -1,0 +1,85 @@
+public void printColumnFamilyStats(PrintStream outs){
+  Map<String,List<ColumnFamilyStoreMBean>> cfstoreMap=new HashMap<String,List<ColumnFamilyStoreMBean>>();
+  Iterator<Map.Entry<String,ColumnFamilyStoreMBean>> cfamilies=probe.getColumnFamilyStoreMBeanProxies();
+  while (cfamilies.hasNext()) {
+    Entry<String,ColumnFamilyStoreMBean> entry=cfamilies.next();
+    String tableName=entry.getKey();
+    ColumnFamilyStoreMBean cfsProxy=entry.getValue();
+    if (!cfstoreMap.containsKey(tableName)) {
+      List<ColumnFamilyStoreMBean> columnFamilies=new ArrayList<ColumnFamilyStoreMBean>();
+      columnFamilies.add(cfsProxy);
+      cfstoreMap.put(tableName,columnFamilies);
+    }
+ else {
+      cfstoreMap.get(tableName).add(cfsProxy);
+    }
+  }
+  for (  Entry<String,List<ColumnFamilyStoreMBean>> entry : cfstoreMap.entrySet()) {
+    String tableName=entry.getKey();
+    List<ColumnFamilyStoreMBean> columnFamilies=entry.getValue();
+    long tableReadCount=0;
+    long tableWriteCount=0;
+    int tablePendingTasks=0;
+    double tableTotalReadTime=0.0f;
+    double tableTotalWriteTime=0.0f;
+    outs.println("Keyspace: " + tableName);
+    for (    ColumnFamilyStoreMBean cfstore : columnFamilies) {
+      long writeCount=cfstore.getWriteCount();
+      long readCount=cfstore.getReadCount();
+      if (readCount > 0) {
+        tableReadCount+=readCount;
+        tableTotalReadTime+=cfstore.getTotalReadLatencyMicros();
+      }
+      if (writeCount > 0) {
+        tableWriteCount+=writeCount;
+        tableTotalWriteTime+=cfstore.getTotalWriteLatencyMicros();
+      }
+      tablePendingTasks+=cfstore.getPendingTasks();
+    }
+    double tableReadLatency=tableReadCount > 0 ? tableTotalReadTime / tableReadCount / 1000 : Double.NaN;
+    double tableWriteLatency=tableWriteCount > 0 ? tableTotalWriteTime / tableWriteCount / 1000 : Double.NaN;
+    outs.println("\tRead Count: " + tableReadCount);
+    outs.println("\tRead Latency: " + String.format("%s",tableReadLatency) + " ms.");
+    outs.println("\tWrite Count: " + tableWriteCount);
+    outs.println("\tWrite Latency: " + String.format("%s",tableWriteLatency) + " ms.");
+    outs.println("\tPending Tasks: " + tablePendingTasks);
+    for (    ColumnFamilyStoreMBean cfstore : columnFamilies) {
+      outs.println("\t\tColumn Family: " + cfstore.getColumnFamilyName());
+      outs.println("\t\tSSTable count: " + cfstore.getLiveSSTableCount());
+      outs.println("\t\tSpace used (live): " + cfstore.getLiveDiskSpaceUsed());
+      outs.println("\t\tSpace used (total): " + cfstore.getTotalDiskSpaceUsed());
+      outs.println("\t\tNumber of Keys (estimate): " + cfstore.estimateKeys());
+      outs.println("\t\tMemtable Columns Count: " + cfstore.getMemtableColumnsCount());
+      outs.println("\t\tMemtable Data Size: " + cfstore.getMemtableDataSize());
+      outs.println("\t\tMemtable Switch Count: " + cfstore.getMemtableSwitchCount());
+      outs.println("\t\tRead Count: " + cfstore.getReadCount());
+      outs.println("\t\tRead Latency: " + String.format("%01.3f",cfstore.getRecentReadLatencyMicros() / 1000) + " ms.");
+      outs.println("\t\tWrite Count: " + cfstore.getWriteCount());
+      outs.println("\t\tWrite Latency: " + String.format("%01.3f",cfstore.getRecentWriteLatencyMicros() / 1000) + " ms.");
+      outs.println("\t\tPending Tasks: " + cfstore.getPendingTasks());
+      InstrumentingCacheMBean keyCacheMBean=probe.getKeyCacheMBean(tableName,cfstore.getColumnFamilyName());
+      if (keyCacheMBean.getCapacity() > 0) {
+        outs.println("\t\tKey cache capacity: " + keyCacheMBean.getCapacity());
+        outs.println("\t\tKey cache size: " + keyCacheMBean.getSize());
+        outs.println("\t\tKey cache hit rate: " + keyCacheMBean.getRecentHitRate());
+      }
+ else {
+        outs.println("\t\tKey cache: disabled");
+      }
+      InstrumentingCacheMBean rowCacheMBean=probe.getRowCacheMBean(tableName,cfstore.getColumnFamilyName());
+      if (rowCacheMBean.getCapacity() > 0) {
+        outs.println("\t\tRow cache capacity: " + rowCacheMBean.getCapacity());
+        outs.println("\t\tRow cache size: " + rowCacheMBean.getSize());
+        outs.println("\t\tRow cache hit rate: " + rowCacheMBean.getRecentHitRate());
+      }
+ else {
+        outs.println("\t\tRow cache: disabled");
+      }
+      outs.println("\t\tCompacted row minimum size: " + cfstore.getMinRowSize());
+      outs.println("\t\tCompacted row maximum size: " + cfstore.getMaxRowSize());
+      outs.println("\t\tCompacted row mean size: " + cfstore.getMeanRowSize());
+      outs.println("");
+    }
+    outs.println("----------------");
+  }
+}

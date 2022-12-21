@@ -1,0 +1,3 @@
+private static String getHtmlBegin(){
+  return "<!DOCTYPE html>\n" + "<html>\n" + "<head>\n"+ "<meta charset=\"UTF-8\">\n"+ "<title>sampleFile - OpenGrok cross reference"+ " for /sampleFile</title></head><body>\n";
+}

@@ -1,0 +1,55 @@
+public CodeStats getStats(ABC abc,MethodBody body,int initScope){
+  CodeStats stats=new CodeStats(this);
+  stats.initscope=initScope;
+  if (!walkCode(stats,0,0,initScope,abc)) {
+    return null;
+  }
+  int scopePos=-1;
+  int prevStart=0;
+  for (int e=0; e < body.exceptions.length; e++) {
+    ABCException ex=body.exceptions[e];
+    try {
+      if (scopePos == -1) {
+        scopePos=stats.instructionStats[adr2pos(ex.end) - 1].scopepos_after;
+      }
+      List<Integer> visited=new ArrayList<>();
+      for (int i=0; i < stats.instructionStats.length; i++) {
+        if (stats.instructionStats[i].seen) {
+          visited.add(i);
+        }
+      }
+      if (!walkCode(stats,adr2pos(ex.target),1 + (ex.isFinally() ? 1 : 0),scopePos,abc)) {
+        return null;
+      }
+      int maxIp=0;
+      for (int i=0; i < stats.instructionStats.length; i++) {
+        if (stats.instructionStats[i].seen && !visited.contains(i)) {
+          maxIp=i;
+        }
+      }
+      scopePos=stats.instructionStats[maxIp].scopepos_after;
+      int stackPos=stats.instructionStats[maxIp].stackpos_after;
+      int nextIp=maxIp + 1;
+      if (code.get(maxIp).definition instanceof JumpIns) {
+        nextIp=adr2pos(pos2adr(nextIp) + code.get(maxIp).operands[0]);
+      }
+      if (nextIp < stats.instructionStats.length) {
+        int origScopePos=stats.instructionStats[nextIp].scopepos;
+        int origStackPos=stats.instructionStats[nextIp].stackpos;
+        if (prevStart == ex.start && ex.isFinally() && !code.get(nextIp).isExit() && stats.instructionStats[nextIp].seen) {
+          for (int i=0; i < stats.instructionStats.length; i++) {
+            stats.instructionStats[i].seen=false;
+          }
+          if (!walkCode(stats,nextIp,origStackPos + 1,scopePos - 1,abc)) {
+            return null;
+          }
+          scopePos--;
+        }
+      }
+      prevStart=ex.start;
+    }
+ catch (    ConvertException ex1) {
+    }
+  }
+  return stats;
+}

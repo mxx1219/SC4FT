@@ -1,0 +1,3 @@
+@Override protected AbstractNonNamespacedResourceOperator<KubernetesClient,ClusterRole,ClusterRoleList,DoneableClusterRole,Resource<ClusterRole,DoneableClusterRole>> operator(){
+  return new ClusterRoleOperator(vertx,client);
+}

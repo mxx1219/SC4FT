@@ -1,0 +1,225 @@
+package edu.stanford.nlp.trees;
+import java.util.Map;
+public abstract class AbstractCollinsHeadFinder implements HeadFinder, CopulaHeadFinder {
+  private static final boolean DEBUG=System.getProperty("HeadFinder",null) != null;
+  protected final TreebankLanguagePack tlp;
+  protected Map<String,String[][]> nonTerminalInfo;
+  protected String[] defaultRule;
+  protected String[] defaultLeftRule;
+  protected String[] defaultRightRule;
+  protected AbstractCollinsHeadFinder(  TreebankLanguagePack tlp,  String... categoriesToAvoid){
+    this.tlp=tlp;
+    defaultLeftRule=new String[categoriesToAvoid.length + 1];
+    defaultRightRule=new String[categoriesToAvoid.length + 1];
+    if (categoriesToAvoid.length > 0) {
+      defaultLeftRule[0]="leftexcept";
+      defaultRightRule[0]="rightexcept";
+      System.arraycopy(categoriesToAvoid,0,defaultLeftRule,1,categoriesToAvoid.length);
+      System.arraycopy(categoriesToAvoid,0,defaultRightRule,1,categoriesToAvoid.length);
+    }
+ else {
+      defaultLeftRule[0]="left";
+      defaultRightRule[0]="right";
+    }
+  }
+  @Override public boolean makesCopulaHead(){
+    return false;
+  }
+  protected Tree findMarkedHead(  Tree t){
+    return null;
+  }
+  @Override public Tree determineHead(  Tree t){
+    return determineHead(t,null);
+  }
+  @Override public Tree determineHead(  Tree t,  Tree parent){
+    if (nonTerminalInfo == null) {
+      throw new IllegalStateException("Classes derived from AbstractCollinsHeadFinder must create and fill HashMap nonTerminalInfo.");
+    }
+    if (t == null || t.isLeaf()) {
+      throw new IllegalArgumentException("Can't return head of null or leaf Tree.");
+    }
+    if (DEBUG) {
+      System.err.println("determineHead for " + t.value());
+    }
+    Tree[] kids=t.children();
+    Tree theHead;
+    if ((theHead=findMarkedHead(t)) != null) {
+      if (DEBUG) {
+        System.err.println("Find marked head method returned " + theHead.label() + " as head of "+ t.label());
+      }
+      return theHead;
+    }
+    if (kids.length == 1) {
+      if (DEBUG) {
+        System.err.println("Only one child determines " + kids[0].label() + " as head of "+ t.label());
+      }
+      return kids[0];
+    }
+    return determineNonTrivialHead(t,parent);
+  }
+  protected Tree determineNonTrivialHead(  Tree t,  Tree parent){
+    Tree theHead=null;
+    String motherCat=tlp.basicCategory(t.label().value());
+    if (motherCat.startsWith("@")) {
+      motherCat=motherCat.substring(1);
+    }
+    if (DEBUG) {
+      System.err.println("Looking for head of " + t.label() + "; value is |"+ t.label().value()+ "|, "+ " baseCat is |"+ motherCat+ '|');
+    }
+    String[][] how=nonTerminalInfo.get(motherCat);
+    Tree[] kids=t.children();
+    if (how == null) {
+      if (DEBUG) {
+        System.err.println("Warning: No rule found for " + motherCat + " (first char: "+ motherCat.charAt(0)+ ')');
+        System.err.println("Known nonterms are: " + nonTerminalInfo.keySet());
+      }
+      if (defaultRule != null) {
+        if (DEBUG) {
+          System.err.println("  Using defaultRule");
+        }
+        return traverseLocate(kids,defaultRule,true);
+      }
+ else {
+        throw new IllegalArgumentException("No head rule defined for " + motherCat + " using "+ this.getClass()+ " in "+ t);
+      }
+    }
+    for (int i=0; i < how.length; i++) {
+      boolean lastResort=(i == how.length - 1);
+      theHead=traverseLocate(kids,how[i],lastResort);
+      if (theHead != null) {
+        break;
+      }
+    }
+    if (DEBUG) {
+      System.err.println("  Chose " + theHead.label());
+    }
+    return theHead;
+  }
+  protected Tree traverseLocate(  Tree[] daughterTrees,  String[] how,  boolean lastResort){
+    int headIdx;
+    if (how[0].equals("left")) {
+      headIdx=findLeftHead(daughterTrees,how);
+    }
+ else     if (how[0].equals("leftdis")) {
+      headIdx=findLeftDisHead(daughterTrees,how);
+    }
+ else     if (how[0].equals("leftexcept")) {
+      headIdx=findLeftExceptHead(daughterTrees,how);
+    }
+ else     if (how[0].equals("right")) {
+      headIdx=findRightHead(daughterTrees,how);
+    }
+ else     if (how[0].equals("rightdis")) {
+      headIdx=findRightDisHead(daughterTrees,how);
+    }
+ else     if (how[0].equals("rightexcept")) {
+      headIdx=findRightExceptHead(daughterTrees,how);
+    }
+ else {
+      throw new IllegalStateException("ERROR: invalid direction type " + how[0] + " to nonTerminalInfo map in AbstractCollinsHeadFinder.");
+    }
+    if (headIdx < 0) {
+      if (lastResort) {
+        String[] rule;
+        if (how[0].startsWith("left")) {
+          headIdx=0;
+          rule=defaultLeftRule;
+        }
+ else {
+          headIdx=daughterTrees.length - 1;
+          rule=defaultRightRule;
+        }
+        Tree child=traverseLocate(daughterTrees,rule,false);
+        if (child != null) {
+          return child;
+        }
+ else {
+          return daughterTrees[headIdx];
+        }
+      }
+ else {
+        return null;
+      }
+    }
+    headIdx=postOperationFix(headIdx,daughterTrees);
+    return daughterTrees[headIdx];
+  }
+  private int findLeftHead(  Tree[] daughterTrees,  String[] how){
+    for (int i=1; i < how.length; i++) {
+      for (int headIdx=0; headIdx < daughterTrees.length; headIdx++) {
+        String childCat=tlp.basicCategory(daughterTrees[headIdx].label().value());
+        if (how[i].equals(childCat)) {
+          return headIdx;
+        }
+      }
+    }
+    return -1;
+  }
+  private int findLeftDisHead(  Tree[] daughterTrees,  String[] how){
+    for (int headIdx=0; headIdx < daughterTrees.length; headIdx++) {
+      String childCat=tlp.basicCategory(daughterTrees[headIdx].label().value());
+      for (int i=1; i < how.length; i++) {
+        if (how[i].equals(childCat)) {
+          return headIdx;
+        }
+      }
+    }
+    return -1;
+  }
+  private int findLeftExceptHead(  Tree[] daughterTrees,  String[] how){
+    for (int headIdx=0; headIdx < daughterTrees.length; headIdx++) {
+      String childCat=tlp.basicCategory(daughterTrees[headIdx].label().value());
+      boolean found=true;
+      for (int i=1; i < how.length; i++) {
+        if (how[i].equals(childCat)) {
+          found=false;
+        }
+      }
+      if (found) {
+        return headIdx;
+      }
+    }
+    return -1;
+  }
+  private int findRightHead(  Tree[] daughterTrees,  String[] how){
+    for (int i=1; i < how.length; i++) {
+      for (int headIdx=daughterTrees.length - 1; headIdx >= 0; headIdx--) {
+        String childCat=tlp.basicCategory(daughterTrees[headIdx].label().value());
+        if (how[i].equals(childCat)) {
+          return headIdx;
+        }
+      }
+    }
+    return -1;
+  }
+  private int findRightDisHead(  Tree[] daughterTrees,  String[] how){
+    for (int headIdx=daughterTrees.length - 1; headIdx >= 0; headIdx--) {
+      String childCat=tlp.basicCategory(daughterTrees[headIdx].label().value());
+      for (int i=1; i < how.length; i++) {
+        if (how[i].equals(childCat)) {
+          return headIdx;
+        }
+      }
+    }
+    return -1;
+  }
+  private int findRightExceptHead(  Tree[] daughterTrees,  String[] how){
+    for (int headIdx=daughterTrees.length - 1; headIdx >= 0; headIdx--) {
+      String childCat=tlp.basicCategory(daughterTrees[headIdx].label().value());
+      boolean found=true;
+      for (int i=1; i < how.length; i++) {
+        if (how[i].equals(childCat)) {
+          found=false;
+        }
+      }
+      if (found) {
+        return headIdx;
+      }
+    }
+    return -1;
+  }
+  protected int postOperationFix(  int headIdx,  Tree[] daughterTrees){
+    return headIdx;
+  }
+  private static final long serialVersionUID=-6540278059442931087L;
+}

@@ -1,0 +1,266 @@
+package org.apache.hadoop.hive.ql.optimizer;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.Stack;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.hive.conf.HiveConf;
+import org.apache.hadoop.hive.metastore.api.Order;
+import org.apache.hadoop.hive.ql.ErrorMsg;
+import org.apache.hadoop.hive.ql.exec.DummyStoreOperator;
+import org.apache.hadoop.hive.ql.exec.JoinOperator;
+import org.apache.hadoop.hive.ql.exec.MapJoinOperator;
+import org.apache.hadoop.hive.ql.exec.Operator;
+import org.apache.hadoop.hive.ql.exec.ReduceSinkOperator;
+import org.apache.hadoop.hive.ql.exec.SMBMapJoinOperator;
+import org.apache.hadoop.hive.ql.exec.TableScanOperator;
+import org.apache.hadoop.hive.ql.lib.Node;
+import org.apache.hadoop.hive.ql.lib.NodeProcessor;
+import org.apache.hadoop.hive.ql.lib.NodeProcessorCtx;
+import org.apache.hadoop.hive.ql.metadata.Partition;
+import org.apache.hadoop.hive.ql.metadata.Table;
+import org.apache.hadoop.hive.ql.parse.ParseContext;
+import org.apache.hadoop.hive.ql.parse.PrunedPartitionList;
+import org.apache.hadoop.hive.ql.parse.QB;
+import org.apache.hadoop.hive.ql.parse.QBJoinTree;
+import org.apache.hadoop.hive.ql.parse.SemanticException;
+import org.apache.hadoop.hive.ql.parse.TableAccessAnalyzer;
+import org.apache.hadoop.hive.ql.plan.ExprNodeDesc;
+import org.apache.hadoop.hive.ql.plan.JoinCondDesc;
+import org.apache.hadoop.hive.ql.plan.JoinDesc;
+import org.apache.hadoop.hive.ql.plan.OperatorDesc;
+import org.apache.hadoop.hive.ql.plan.ReduceSinkDesc;
+import org.apache.hadoop.hive.ql.plan.SMBJoinDesc;
+import org.apache.hadoop.util.ReflectionUtils;
+abstract public class AbstractSMBJoinProc extends AbstractBucketJoinProc implements NodeProcessor {
+  private static final Log LOG=LogFactory.getLog(SortedMergeBucketMapJoinOptimizer.class.getName());
+  public AbstractSMBJoinProc(  ParseContext pctx){
+    super(pctx);
+  }
+  public AbstractSMBJoinProc(){
+    super();
+  }
+  @Override abstract public Object process(  Node nd,  Stack<Node> stack,  NodeProcessorCtx procCtx,  Object... nodeOutputs) throws SemanticException ;
+  protected boolean canConvertBucketMapJoinToSMBJoin(  MapJoinOperator mapJoinOp,  Stack<Node> stack,  SortBucketJoinProcCtx smbJoinContext,  Object... nodeOutputs) throws SemanticException {
+    if (mapJoinOp.getConf().getAliasBucketFileNameMapping() == null || mapJoinOp.getConf().getAliasBucketFileNameMapping().size() == 0) {
+      return false;
+    }
+    boolean tableEligibleForBucketedSortMergeJoin=true;
+    QBJoinTree joinCxt=this.pGraphContext.getMapJoinContext().get(mapJoinOp);
+    if (joinCxt == null) {
+      return false;
+    }
+    String[] srcs=joinCxt.getBaseSrc();
+    for (int srcPos=0; srcPos < srcs.length; srcPos++) {
+      srcs[srcPos]=QB.getAppendedAliasFromId(joinCxt.getId(),srcs[srcPos]);
+    }
+    List<Order> sortColumnsFirstTable=new ArrayList<Order>();
+    for (int pos=0; pos < srcs.length; pos++) {
+      tableEligibleForBucketedSortMergeJoin=tableEligibleForBucketedSortMergeJoin && isEligibleForBucketSortMergeJoin(smbJoinContext,pGraphContext,mapJoinOp.getConf().getKeys().get((byte)pos),joinCxt,srcs,pos,sortColumnsFirstTable);
+    }
+    if (!tableEligibleForBucketedSortMergeJoin) {
+      if (MapJoinProcessor.checkMapJoin(mapJoinOp.getConf().getPosBigTable(),mapJoinOp.getConf().getConds()) < 0) {
+        throw new SemanticException(ErrorMsg.INVALID_BIGTABLE_MAPJOIN.format(mapJoinOp.getConf().getBigTableAlias()));
+      }
+      return false;
+    }
+    smbJoinContext.setSrcs(srcs);
+    return true;
+  }
+  protected SMBMapJoinOperator convertBucketMapJoinToSMBJoin(  MapJoinOperator mapJoinOp,  SortBucketJoinProcCtx smbJoinContext,  ParseContext parseContext){
+    String[] srcs=smbJoinContext.getSrcs();
+    SMBMapJoinOperator smbJop=new SMBMapJoinOperator(mapJoinOp);
+    SMBJoinDesc smbJoinDesc=new SMBJoinDesc(mapJoinOp.getConf());
+    smbJop.setConf(smbJoinDesc);
+    HashMap<Byte,String> tagToAlias=new HashMap<Byte,String>();
+    for (int i=0; i < srcs.length; i++) {
+      tagToAlias.put((byte)i,srcs[i]);
+    }
+    smbJoinDesc.setTagToAlias(tagToAlias);
+    int indexInListMapJoinNoReducer=this.pGraphContext.getListMapJoinOpsNoReducer().indexOf(mapJoinOp);
+    if (indexInListMapJoinNoReducer >= 0) {
+      this.pGraphContext.getListMapJoinOpsNoReducer().remove(indexInListMapJoinNoReducer);
+      this.pGraphContext.getListMapJoinOpsNoReducer().add(indexInListMapJoinNoReducer,smbJop);
+    }
+    Map<String,DummyStoreOperator> aliasToSink=new HashMap<String,DummyStoreOperator>();
+    List<Operator<? extends OperatorDesc>> parentOperators=mapJoinOp.getParentOperators();
+    for (int i=0; i < parentOperators.size(); i++) {
+      Operator<? extends OperatorDesc> par=parentOperators.get(i);
+      int index=par.getChildOperators().indexOf(mapJoinOp);
+      par.getChildOperators().remove(index);
+      if (i == smbJoinDesc.getPosBigTable()) {
+        par.getChildOperators().add(index,smbJop);
+      }
+ else {
+        DummyStoreOperator dummyStoreOp=new DummyStoreOperator();
+        par.getChildOperators().add(index,dummyStoreOp);
+        List<Operator<? extends OperatorDesc>> childrenOps=new ArrayList<Operator<? extends OperatorDesc>>();
+        childrenOps.add(smbJop);
+        dummyStoreOp.setChildOperators(childrenOps);
+        List<Operator<? extends OperatorDesc>> parentOps=new ArrayList<Operator<? extends OperatorDesc>>();
+        parentOps.add(par);
+        dummyStoreOp.setParentOperators(parentOps);
+        aliasToSink.put(srcs[i],dummyStoreOp);
+        smbJop.getParentOperators().remove(i);
+        smbJop.getParentOperators().add(i,dummyStoreOp);
+      }
+    }
+    smbJoinDesc.setAliasToSink(aliasToSink);
+    List<Operator<? extends OperatorDesc>> childOps=mapJoinOp.getChildOperators();
+    for (int i=0; i < childOps.size(); i++) {
+      Operator<? extends OperatorDesc> child=childOps.get(i);
+      int index=child.getParentOperators().indexOf(mapJoinOp);
+      child.getParentOperators().remove(index);
+      child.getParentOperators().add(index,smbJop);
+    }
+    parseContext.getSmbMapJoinContext().put(smbJop,parseContext.getMapJoinContext().get(mapJoinOp));
+    parseContext.getMapJoinContext().remove(mapJoinOp);
+    parseContext.getOpParseCtx().put(smbJop,parseContext.getOpParseCtx().get(mapJoinOp));
+    return smbJop;
+  }
+  private boolean isEligibleForBucketSortMergeJoin(  SortBucketJoinProcCtx smbJoinContext,  ParseContext pctx,  List<ExprNodeDesc> keys,  QBJoinTree joinTree,  String[] aliases,  int pos,  List<Order> sortColumnsFirstTable) throws SemanticException {
+    String alias=aliases[pos];
+    Map<TableScanOperator,Table> topToTable=this.pGraphContext.getTopToTable();
+    Operator<? extends OperatorDesc> topOp=joinTree.getAliasToOpInfo().get(alias);
+    if (topOp == null) {
+      return false;
+    }
+    List<String> joinCols=toColumns(keys);
+    if (joinCols == null || joinCols.isEmpty()) {
+      return false;
+    }
+    TableScanOperator tso=TableAccessAnalyzer.genRootTableScan(topOp,joinCols);
+    if (tso == null) {
+      return false;
+    }
+    if (pGraphContext.getTopOps().containsValue(tso)) {
+      for (      Map.Entry<String,Operator<? extends OperatorDesc>> topOpEntry : this.pGraphContext.getTopOps().entrySet()) {
+        if (topOpEntry.getValue() == tso) {
+          alias=topOpEntry.getKey();
+          aliases[pos]=alias;
+          break;
+        }
+      }
+    }
+ else {
+      return false;
+    }
+    Table tbl=topToTable.get(tso);
+    if (tbl.isPartitioned()) {
+      PrunedPartitionList prunedParts=pGraphContext.getPrunedPartitions(alias,tso);
+      List<Partition> partitions=prunedParts.getNotDeniedPartns();
+      if ((pos == 0) && (partitions != null) && (!partitions.isEmpty())) {
+        Partition firstPartition=partitions.get(0);
+        sortColumnsFirstTable.addAll(firstPartition.getSortCols());
+      }
+      for (      Partition partition : prunedParts.getNotDeniedPartns()) {
+        if (!checkSortColsAndJoinCols(partition.getSortCols(),joinCols,sortColumnsFirstTable)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    if (pos == 0) {
+      sortColumnsFirstTable.addAll(tbl.getSortCols());
+    }
+    return checkSortColsAndJoinCols(tbl.getSortCols(),joinCols,sortColumnsFirstTable);
+  }
+  private boolean checkSortColsAndJoinCols(  List<Order> sortCols,  List<String> joinCols,  List<Order> sortColumnsFirstPartition){
+    if (sortCols == null || sortCols.size() < joinCols.size()) {
+      return false;
+    }
+    List<String> sortColNames=new ArrayList<String>();
+    for (int pos=0; pos < sortCols.size(); pos++) {
+      Order o=sortCols.get(pos);
+      if (o.getOrder() != sortColumnsFirstPartition.get(pos).getOrder()) {
+        return false;
+      }
+      sortColNames.add(o.getCol());
+    }
+    return sortColNames.subList(0,joinCols.size()).containsAll(joinCols);
+  }
+  protected boolean checkConvertJoinToSMBJoin(  JoinOperator joinOperator,  SortBucketJoinProcCtx smbJoinContext,  ParseContext pGraphContext) throws SemanticException {
+    QBJoinTree joinCtx=pGraphContext.getJoinContext().get(joinOperator);
+    if (joinCtx == null) {
+      return false;
+    }
+    String[] srcs=joinCtx.getBaseSrc();
+    List<Order> sortColumnsFirstTable=new ArrayList<Order>();
+    for (int pos=0; pos < srcs.length; pos++) {
+      if (!isEligibleForBucketSortMergeJoin(smbJoinContext,pGraphContext,smbJoinContext.getKeyExprMap().get((byte)pos),joinCtx,srcs,pos,sortColumnsFirstTable)) {
+        return false;
+      }
+    }
+    smbJoinContext.setSrcs(srcs);
+    return true;
+  }
+  protected boolean canConvertJoinToSMBJoin(  JoinOperator joinOperator,  SortBucketJoinProcCtx smbJoinContext,  ParseContext pGraphContext) throws SemanticException {
+    boolean canConvert=canConvertJoinToBucketMapJoin(joinOperator,pGraphContext,smbJoinContext);
+    if (!canConvert) {
+      return false;
+    }
+    return checkConvertJoinToSMBJoin(joinOperator,smbJoinContext,pGraphContext);
+  }
+  protected boolean canConvertJoinToBucketMapJoin(  JoinOperator joinOp,  ParseContext pGraphContext,  SortBucketJoinProcCtx context) throws SemanticException {
+    if (context.getRejectedJoinOps().contains(joinOp)) {
+      return false;
+    }
+    QBJoinTree joinCtx=pGraphContext.getJoinContext().get(joinOp);
+    if (joinCtx == null) {
+      return false;
+    }
+    Class<? extends BigTableSelectorForAutoSMJ> bigTableMatcherClass=null;
+    try {
+      bigTableMatcherClass=(Class<? extends BigTableSelectorForAutoSMJ>)(Class.forName(HiveConf.getVar(pGraphContext.getConf(),HiveConf.ConfVars.HIVE_AUTO_SORTMERGE_JOIN_BIGTABLE_SELECTOR)));
+    }
+ catch (    ClassNotFoundException e) {
+      throw new SemanticException(e.getMessage());
+    }
+    BigTableSelectorForAutoSMJ bigTableMatcher=(BigTableSelectorForAutoSMJ)ReflectionUtils.newInstance(bigTableMatcherClass,null);
+    JoinDesc joinDesc=joinOp.getConf();
+    JoinCondDesc[] joinCondns=joinDesc.getConds();
+    Set<Integer> joinCandidates=MapJoinProcessor.getBigTableCandidates(joinCondns);
+    if (joinCandidates.isEmpty()) {
+      return false;
+    }
+    int bigTablePosition=bigTableMatcher.getBigTablePosition(pGraphContext,joinOp,joinCandidates);
+    if (bigTablePosition < 0) {
+      return false;
+    }
+    context.setBigTablePosition(bigTablePosition);
+    String joinAlias=bigTablePosition == 0 ? joinCtx.getLeftAlias() : joinCtx.getRightAliases()[bigTablePosition - 1];
+    joinAlias=QB.getAppendedAliasFromId(joinCtx.getId(),joinAlias);
+    Map<Byte,List<ExprNodeDesc>> keyExprMap=new HashMap<Byte,List<ExprNodeDesc>>();
+    List<Operator<? extends OperatorDesc>> parentOps=joinOp.getParentOperators();
+    for (    Operator<? extends OperatorDesc> parentOp : parentOps) {
+      ReduceSinkDesc rsconf=((ReduceSinkOperator)parentOp).getConf();
+      Byte tag=(byte)rsconf.getTag();
+      List<ExprNodeDesc> keys=rsconf.getKeyCols();
+      keyExprMap.put(tag,keys);
+    }
+    context.setKeyExprMap(keyExprMap);
+    String[] joinSrcs=joinCtx.getBaseSrc();
+    String[] srcs=new String[joinSrcs.length];
+    for (int srcPos=0; srcPos < joinSrcs.length; srcPos++) {
+      joinSrcs[srcPos]=QB.getAppendedAliasFromId(joinCtx.getId(),joinSrcs[srcPos]);
+      srcs[srcPos]=new String(joinSrcs[srcPos]);
+    }
+    return checkConvertBucketMapJoin(pGraphContext,context,joinCtx,keyExprMap,joinAlias,Arrays.asList(srcs));
+  }
+  protected MapJoinOperator convertJoinToBucketMapJoin(  JoinOperator joinOp,  SortBucketJoinProcCtx joinContext,  ParseContext parseContext) throws SemanticException {
+    MapJoinOperator mapJoinOp=MapJoinProcessor.convertMapJoin(parseContext.getConf(),parseContext.getOpParseCtx(),joinOp,pGraphContext.getJoinContext().get(joinOp),joinContext.getBigTablePosition(),false,false);
+    parseContext.getMapJoinContext().put(mapJoinOp,parseContext.getJoinContext().get(joinOp));
+    parseContext.getJoinContext().remove(joinOp);
+    convertMapJoinToBucketMapJoin(mapJoinOp,joinContext);
+    return mapJoinOp;
+  }
+  protected void convertJoinToSMBJoin(  JoinOperator joinOp,  SortBucketJoinProcCtx smbJoinContext,  ParseContext parseContext) throws SemanticException {
+    MapJoinOperator mapJoinOp=convertJoinToBucketMapJoin(joinOp,smbJoinContext,parseContext);
+    SMBMapJoinOperator smbMapJoinOp=convertBucketMapJoinToSMBJoin(mapJoinOp,smbJoinContext,parseContext);
+    smbMapJoinOp.setConvertedAutomaticallySMBJoin(true);
+  }
+}

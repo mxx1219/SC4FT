@@ -1,0 +1,9 @@
+@Override public byte[] apply(Object value){
+  Kryo kryo=kryoThreadLocal.get();
+  ByteArrayOutputStream bos=new ByteArrayOutputStream(256);
+  Output output=new Output(bos);
+  output.writeInt(IDENTITY_NUMBER);
+  kryo.writeClassAndObject(output,value);
+  output.close();
+  return bos.toByteArray();
+}

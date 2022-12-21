@@ -1,0 +1,16 @@
+@Test public void shouldOmitTargetsInTheSameBuildFileInVisibilityArguments() throws Exception {
+  Resolver resolver=new Resolver(buckRepoRoot,thirdPartyRelative,localRepo,httpd.getUri("/").toString());
+  resolver.resolve("com.example:deps-in-same-project:jar:1.0");
+  Path exampleDir=thirdPartyRelative.resolve("example");
+  List<Map<String,Object>> allTargets=buildFileParser.getAll(buckRepoRoot.resolve(exampleDir).resolve("BUCK"));
+  assertEquals(2,allTargets.size());
+  Map<String,Object> noDeps=null;
+  for (  Map<String,Object> target : allTargets) {
+    if ("no-deps".equals(target.get("name"))) {
+      noDeps=target;
+      break;
+    }
+  }
+  assertNotNull(noDeps);
+  assertEquals(0,((Collection)noDeps.get("visibility")).size());
+}

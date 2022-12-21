@@ -1,0 +1,16 @@
+public static void doTestGetTableRegions(Hbase.Iface handler) throws Exception {
+  assertEquals(handler.getTableNames().size(),0);
+  handler.createTable(tableAname,getColumnDescriptors());
+  assertEquals(handler.getTableNames().size(),1);
+  List<TRegionInfo> regions=handler.getTableRegions(tableAname);
+  int regionCount=regions.size();
+  assertEquals("empty table should have only 1 region, " + "but found " + regionCount,regionCount,1);
+  LOG.info("Region found:" + regions.get(0));
+  handler.disableTable(tableAname);
+  handler.deleteTable(tableAname);
+  if (handler instanceof ThriftServerRunner.HBaseHandler) {
+    ((ThriftServerRunner.HBaseHandler)handler).getTable(tableAname).clearRegionCache();
+  }
+  regionCount=handler.getTableRegions(tableAname).size();
+  assertEquals("non-existing table should have 0 region, " + "but found " + regionCount,regionCount,0);
+}

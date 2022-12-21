@@ -1,0 +1,16 @@
+@Override public IActivityContainer createActivityContainer(IBinder parentActivityToken,IActivityContainerCallback callback) throws RemoteException {
+  enforceCallingPermission(android.Manifest.permission.MANAGE_ACTIVITY_STACKS,"createActivityContainer()");
+synchronized (this) {
+    if (parentActivityToken == null) {
+      throw new IllegalArgumentException("parent token must not be null");
+    }
+    ActivityRecord r=ActivityRecord.forToken(parentActivityToken);
+    if (r == null) {
+      return null;
+    }
+    if (callback == null) {
+      throw new IllegalArgumentException("callback must not be null");
+    }
+    return mStackSupervisor.createActivityContainer(r,callback);
+  }
+}

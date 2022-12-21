@@ -1,0 +1,46 @@
+public History get(File file,Repository repository) throws Exception {
+  Class<? extends HistoryParser> parserClass;
+  parserClass=repository.getHistoryParser();
+  File cache=getCachedFile(file);
+  boolean hasCache=(cache != null) && cache.exists();
+  if (hasCache && file.lastModified() < cache.lastModified()) {
+    try {
+      return readCache(cache);
+    }
+ catch (    Exception e) {
+      System.err.println("Error when reading cache file '" + cache + "':");
+      e.printStackTrace();
+    }
+  }
+  HistoryParser parser=parserClass.newInstance();
+  History history=null;
+  long time;
+  try {
+    time=System.currentTimeMillis();
+    history=parser.parse(file,repository);
+    time=System.currentTimeMillis() - time;
+  }
+ catch (  UnsupportedOperationException e) {
+    return null;
+  }
+catch (  Exception e) {
+    System.err.println("Failed to parse " + file.getAbsolutePath());
+    e.printStackTrace();
+    throw e;
+  }
+  if (repository != null && repository.isCacheable() && !file.isDirectory()) {
+    RuntimeEnvironment env=RuntimeEnvironment.getInstance();
+    if (env.useHistoryCache()) {
+      if ((cache != null) && (cache.exists() || (time > env.getHistoryReaderTimeLimit()))) {
+        try {
+          store(history,cache);
+        }
+ catch (        Exception e) {
+          System.err.println("Error when writing cache file '" + cache + "':");
+          e.printStackTrace();
+        }
+      }
+    }
+  }
+  return history;
+}

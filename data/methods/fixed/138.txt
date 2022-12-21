@@ -1,0 +1,5 @@
+@Override public void onBindViewHolder(CountryAdapter.CountryViewHolder viewHolder,int position){
+  if (position < mFilteredList.size()) {
+    viewHolder.populateViews(mFilteredList.get(position));
+  }
+}

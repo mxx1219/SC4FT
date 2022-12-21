@@ -1,0 +1,20 @@
+private static MessageSourceContact findMessageSourceContact(EventObject obj,List<MessageSourceContact> list){
+  Contact contact=null;
+  ChatRoom chatRoom=null;
+  if (obj instanceof MessageDeliveredEvent) {
+    contact=((MessageDeliveredEvent)obj).getDestinationContact();
+  }
+ else   if (obj instanceof MessageReceivedEvent) {
+    contact=((MessageReceivedEvent)obj).getSourceContact();
+  }
+ else   if (obj instanceof ChatRoomMessageDeliveredEvent) {
+    chatRoom=((ChatRoomMessageDeliveredEvent)obj).getSourceChatRoom();
+  }
+ else   if (obj instanceof ChatRoomMessageReceivedEvent) {
+    chatRoom=((ChatRoomMessageDeliveredEvent)obj).getSourceChatRoom();
+  }
+  for (  MessageSourceContact msc : list) {
+    if ((contact != null && contact.equals(msc.getContact())) || (chatRoom != null && chatRoom.equals(msc.getRoom())))     return msc;
+  }
+  return null;
+}

@@ -1,0 +1,17 @@
+public void test01(){
+  try {
+    List list=sqlMapClient.queryForList("TestSqlMap.test01",null);
+    assertEquals(2,list.size());
+    Person person=(Person)list.get(0);
+    assertEquals("Fred",person.getName());
+    assertEquals(1,person.getAddresses().size());
+    assertEquals(2,person.getPhoneNumbers().size());
+    person=(Person)list.get(1);
+    assertEquals("Wilma",person.getName());
+    assertEquals(2,person.getAddresses().size());
+    assertEquals(1,person.getPhoneNumbers().size());
+  }
+ catch (  Exception e) {
+    fail(e.getMessage());
+  }
+}

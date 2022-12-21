@@ -1,0 +1,198 @@
+package net.java.sip.communicator.impl.protocol.irc;
+import java.util.*;
+import net.java.sip.communicator.service.protocol.*;
+import net.java.sip.communicator.service.protocol.event.*;
+import net.java.sip.communicator.util.*;
+public class OperationSetPersistentPresenceIrcImpl extends AbstractOperationSetPersistentPresence<ProtocolProviderServiceIrcImpl> {
+  private static final Logger LOGGER=Logger.getLogger(OperationSetPersistentPresenceIrcImpl.class);
+  private final ContactGroupIrcImpl rootGroup=new ContactGroupIrcImpl(this.parentProvider);
+  protected OperationSetPersistentPresenceIrcImpl(  final ProtocolProviderServiceIrcImpl parentProvider){
+    super(parentProvider);
+  }
+  private ContactIrcImpl createVolatileContact(  final String id){
+    ContactGroupIrcImpl volatileGroup=getNonPersistentGroup();
+    ContactIrcImpl newVolatileContact=new ContactIrcImpl(this.parentProvider,id,volatileGroup);
+    volatileGroup.addContact(newVolatileContact);
+    final IrcConnection connection=this.parentProvider.getIrcStack().getConnection();
+    if (connection != null) {
+      connection.getPresenceManager().addNickWatch(id);
+    }
+    this.fireSubscriptionEvent(newVolatileContact,volatileGroup,SubscriptionEvent.SUBSCRIPTION_CREATED);
+    return newVolatileContact;
+  }
+  private ContactGroupIrcImpl getNonPersistentGroup(){
+    String groupName=IrcActivator.getResources().getI18NString("service.gui.NOT_IN_CONTACT_LIST_GROUP_NAME");
+    for (int i=0; i < getRootGroup().countSubgroups(); i++) {
+      ContactGroupIrcImpl gr=(ContactGroupIrcImpl)getRootGroup().getGroup(i);
+      if (!gr.isPersistent() && gr.getGroupName().equals(groupName)) {
+        return gr;
+      }
+    }
+    ContactGroupIrcImpl volatileGroup=new ContactGroupIrcImpl(this.parentProvider,this.rootGroup,groupName);
+    this.rootGroup.addSubGroup(volatileGroup);
+    this.fireServerStoredGroupEvent(volatileGroup,ServerStoredGroupEvent.GROUP_CREATED_EVENT);
+    return volatileGroup;
+  }
+  public ContactGroupIrcImpl getRootGroup(){
+    return rootGroup;
+  }
+  @Override public void subscribe(  final String contactIdentifier) throws IllegalArgumentException, IllegalStateException, OperationFailedException {
+    if (contactIdentifier == null) {
+      throw new IllegalArgumentException("contactIdentifier cannot be null");
+    }
+    final IrcConnection connection=this.parentProvider.getIrcStack().getConnection();
+    if (connection == null) {
+      return;
+    }
+    connection.getPresenceManager().addNickWatch(contactIdentifier);
+  }
+  @Override public void subscribe(  final ContactGroup parent,  final String contactIdentifier) throws IllegalArgumentException, IllegalStateException, OperationFailedException {
+    if (contactIdentifier == null) {
+      throw new IllegalArgumentException("contactIdentifier cannot be null");
+    }
+    final IrcConnection connection=this.parentProvider.getIrcStack().getConnection();
+    if (connection == null) {
+      return;
+    }
+    connection.getPresenceManager().addNickWatch(contactIdentifier);
+  }
+  @Override public void unsubscribe(  final Contact contact) throws IllegalArgumentException, IllegalStateException, OperationFailedException {
+    if (contact == null) {
+      throw new IllegalArgumentException("contact cannot be null");
+    }
+    final IrcConnection connection=this.parentProvider.getIrcStack().getConnection();
+    if (connection == null) {
+      return;
+    }
+    connection.getPresenceManager().removeNickWatch(contact.getAddress());
+  }
+  @Override public void createServerStoredContactGroup(  final ContactGroup parent,  final String groupName) throws OperationFailedException {
+    LOGGER.trace("createServerStoredContactGroup(...) called");
+    throw new OperationFailedException("Not implemented.",OperationFailedException.NOT_SUPPORTED_OPERATION);
+  }
+  @Override public void removeServerStoredContactGroup(  final ContactGroup group) throws OperationFailedException {
+    LOGGER.trace("removeServerStoredContactGroup called");
+    throw new OperationFailedException("Not implemented.",OperationFailedException.NOT_SUPPORTED_OPERATION);
+  }
+  @Override public void renameServerStoredContactGroup(  final ContactGroup group,  final String newName){
+    LOGGER.trace("renameServerStoredContactGroup called");
+    ((ContactGroupIrcImpl)group).setGroupName(newName);
+  }
+  @Override public void moveContactToGroup(  final Contact contactToMove,  final ContactGroup newParent) throws OperationFailedException {
+    LOGGER.trace("moveContactToGroup called");
+    throw new OperationFailedException("Not implemented.",OperationFailedException.NOT_SUPPORTED_OPERATION);
+  }
+  @Override public ContactGroup getServerStoredContactListRoot(){
+    return this.rootGroup;
+  }
+  @Override public ContactIrcImpl createUnresolvedContact(  final String address,  final String persistentData,  final ContactGroup parentGroup){
+    if (!(parentGroup instanceof ContactGroupIrcImpl)) {
+      throw new IllegalArgumentException("Provided contact group is not an IRC contact group instance.");
+    }
+    return new ContactIrcImpl(this.parentProvider,address,(ContactGroupIrcImpl)parentGroup);
+  }
+  @Override public ContactIrcImpl createUnresolvedContact(  final String address,  final String persistentData){
+    return new ContactIrcImpl(this.parentProvider,address,this.getRootGroup());
+  }
+  @Override public ContactGroupIrcImpl createUnresolvedContactGroup(  final String groupUID,  final String persistentData,  final ContactGroup parentGroup){
+    if (!(parentGroup instanceof ContactGroupIrcImpl)) {
+      throw new IllegalArgumentException("parentGroup is not a ContactGroupIrcImpl instance");
+    }
+    return new ContactGroupIrcImpl(this.parentProvider,(ContactGroupIrcImpl)parentGroup,groupUID);
+  }
+  @Override public PresenceStatus getPresenceStatus(){
+    final IrcConnection connection=this.parentProvider.getIrcStack().getConnection();
+    if (connection != null && connection.isConnected()) {
+      return connection.getPresenceManager().isAway() ? IrcStatusEnum.AWAY : IrcStatusEnum.ONLINE;
+    }
+ else {
+      return IrcStatusEnum.OFFLINE;
+    }
+  }
+  @Override public void publishPresenceStatus(  final PresenceStatus status,  final String statusMessage) throws IllegalArgumentException, IllegalStateException, OperationFailedException {
+    final IrcConnection connection=this.parentProvider.getIrcStack().getConnection();
+    String message=statusMessage;
+    if (connection == null) {
+      throw new IllegalStateException("Connection is not available.");
+    }
+    if (message != null && message.isEmpty()) {
+      message=null;
+    }
+    if (status.getStatus() >= IrcStatusEnum.AVAILABLE_THRESHOLD) {
+      connection.getPresenceManager().away(false,message);
+    }
+ else     if (status.getStatus() >= IrcStatusEnum.AWAY_THRESHOLD) {
+      connection.getPresenceManager().away(true,message);
+    }
+  }
+  void updatePresenceStatus(  final PresenceStatus previousStatus,  final PresenceStatus status){
+    fireProviderStatusChangeEvent(previousStatus,status);
+  }
+  @Override public Iterator<PresenceStatus> getSupportedStatusSet(){
+    final HashSet<PresenceStatus> statuses=new HashSet<PresenceStatus>();
+    final Iterator<IrcStatusEnum> supported=IrcStatusEnum.supportedStatusSet();
+    while (supported.hasNext()) {
+      statuses.add(supported.next());
+    }
+    return statuses.iterator();
+  }
+  @Override public PresenceStatus queryContactStatus(  final String contactIdentifier) throws IllegalArgumentException, IllegalStateException, OperationFailedException {
+    throw new OperationFailedException("Not supported.",OperationFailedException.NOT_SUPPORTED_OPERATION);
+  }
+  @Override public ContactIrcImpl findContactByID(  final String contactID){
+    if (contactID == null) {
+      return null;
+    }
+    ContactIrcImpl contact=this.rootGroup.getContact(contactID);
+    if (contact != null) {
+      return contact;
+    }
+    Iterator<ContactGroup> groups=this.rootGroup.subgroups();
+    while (groups.hasNext()) {
+      ContactGroupIrcImpl group=(ContactGroupIrcImpl)groups.next();
+      contact=group.getContact(contactID);
+      if (contact != null) {
+        return contact;
+      }
+    }
+    return null;
+  }
+  @Override public void setAuthorizationHandler(  final AuthorizationHandler handler){
+  }
+  @Override public String getCurrentStatusMessage(){
+    final IrcConnection connection=this.parentProvider.getIrcStack().getConnection();
+    if (connection == null) {
+      throw new IllegalStateException("Connection is not available.");
+    }
+    return connection.getPresenceManager().isAway() ? connection.getPresenceManager().getMessage() : "";
+  }
+  Contact findOrCreateContactByID(  final String id){
+    Contact contact=findContactByID(id);
+    if (contact == null) {
+      contact=createVolatileContact(id);
+      LOGGER.debug("No existing contact found. Created volatile contact" + " for nick name '" + id + "'.");
+    }
+    return contact;
+  }
+  void updateNickContactPresence(  final String nick,  final PresenceStatus newStatus){
+    LOGGER.trace("Received presence update for nick '" + nick + "', status: "+ newStatus.getStatus());
+    final Contact contact=findContactByID(nick);
+    if (contact == null) {
+      LOGGER.trace("null contact instance found: presence will not be " + "processed.");
+      return;
+    }
+    if (!(contact instanceof ContactIrcImpl)) {
+      throw new IllegalArgumentException("Expected contact to be an IRC contact instance.");
+    }
+    final ContactIrcImpl contactIrc=(ContactIrcImpl)contact;
+    final ContactGroup group=contact.getParentContactGroup();
+    final PresenceStatus previous=contactIrc.getPresenceStatus();
+    contactIrc.setPresenceStatus(newStatus);
+    fireContactPresenceStatusChangeEvent(contact,group,previous);
+  }
+  void updateNick(  final String oldNick,  final String newNick){
+    ContactIrcImpl contact=findContactByID(oldNick);
+    contact.setAddress(newNick);
+    fireContactPropertyChangeEvent(ContactPropertyChangeEvent.PROPERTY_DISPLAY_NAME,contact,oldNick,newNick);
+  }
+}

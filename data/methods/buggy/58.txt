@@ -1,0 +1,5 @@
+void updateNick(final String oldNick,final String newNick){
+  ContactIrcImpl contact=findContactByID(oldNick);
+  contact.setAddress(newNick);
+  fireContactPropertyChangeEvent(ContactPropertyChangeEvent.PROPERTY_DISPLAY_NAME,contact,oldNick,newNick);
+}

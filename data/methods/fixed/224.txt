@@ -1,0 +1,33 @@
+private int readHeaders(ExtractorInput input) throws IOException, InterruptedException {
+  boolean readingHeaders=true;
+  while (readingHeaders) {
+    if (!oggPacket.populate(input)) {
+      state=STATE_END_OF_INPUT;
+      return Extractor.RESULT_END_OF_INPUT;
+    }
+    lengthOfReadPacket=input.getPosition() - payloadStartPosition;
+    readingHeaders=readHeaders(oggPacket.getPayload(),payloadStartPosition,setupData);
+    if (readingHeaders) {
+      payloadStartPosition=input.getPosition();
+    }
+  }
+  sampleRate=setupData.format.sampleRate;
+  if (!formatSet) {
+    trackOutput.format(setupData.format);
+    formatSet=true;
+  }
+  if (setupData.oggSeeker != null) {
+    oggSeeker=setupData.oggSeeker;
+  }
+ else   if (input.getLength() == C.LENGTH_UNSET) {
+    oggSeeker=new UnseekableOggSeeker();
+  }
+ else {
+    OggPageHeader firstPayloadPageHeader=oggPacket.getPageHeader();
+    oggSeeker=new DefaultOggSeeker(payloadStartPosition,input.getLength(),this,firstPayloadPageHeader.headerSize + firstPayloadPageHeader.bodySize,firstPayloadPageHeader.granulePosition);
+  }
+  setupData=null;
+  state=STATE_READ_PAYLOAD;
+  oggPacket.trimPayload();
+  return Extractor.RESULT_CONTINUE;
+}

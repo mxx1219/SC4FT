@@ -1,0 +1,15 @@
+public void send(final KafkaRecord record){
+  if (kafkaProducer.isPresent()) {
+    try {
+      final Future<RecordMetadata> future=kafkaProducer.get().send(new ProducerRecord<String,byte[]>(record.getKafkaTopic(),record.getKafkaData()));
+      final RecordMetadata metadata=future.get(KAFKA_SEND_TIMEOUT,TimeUnit.SECONDS);
+      log.debug("Sent an event to Kafka, meta: {}",metadata);
+    }
+ catch (    ExecutionException|InterruptedException|TimeoutException e) {
+      log.error("Unable to send an event to Kafka",e);
+    }
+  }
+ else {
+    log.debug("KafkaProducer isn't set. Not sending anything.");
+  }
+}

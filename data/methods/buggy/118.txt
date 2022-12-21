@@ -1,0 +1,8 @@
+void close(){
+  try {
+    client.shutDown();
+  }
+ catch (  InterruptedException e) {
+    LOGGER.debug(e);
+  }
+}

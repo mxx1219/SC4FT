@@ -1,0 +1,14 @@
+public static void updateRequestAttributes(HttpServletRequest req){
+  Map<String,Map<String,Object>> msgss=getMessageSet();
+  if (null != msgss) {
+    Map<String,Object> msgs=null;
+    String lKey=Strings.sBlank(Mvcs.getLocalizationKey(),getDefaultLocalizationKey());
+    if (!Strings.isBlank(lKey))     msgs=msgss.get(lKey);
+    if (null == msgs) {
+      if (msgss.size() > 0)       msgs=msgss.values().iterator().next();
+    }
+    req.setAttribute(MSG,msgs);
+  }
+  req.setAttribute("base",req.getContextPath());
+  req.setAttribute("$request",req);
+}

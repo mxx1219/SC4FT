@@ -1,0 +1,25 @@
+protected static void addDependencies(URL hpiResUrl,String fromPath,Set<URL> dependencySet) throws URISyntaxException, MalformedURLException {
+  if (dependencySet.contains(hpiResUrl)) {
+    return;
+  }
+  Manifest manifest=parsePluginManifest(hpiResUrl);
+  String dependencySpec=manifest.getMainAttributes().getValue("Plugin-Dependencies");
+  if (dependencySpec != null) {
+    String[] dependencyTokens=dependencySpec.split(",");
+    ServletContext context=Jenkins.getActiveInstance().servletContext;
+    for (    String dependencyToken : dependencyTokens) {
+      if (dependencyToken.endsWith(";resolution:=optional")) {
+        continue;
+      }
+      String artifactId=dependencyToken.split(":")[0];
+      URL dependencyURL=context.getResource(fromPath + "/" + artifactId+ ".hpi");
+      if (dependencyURL == null) {
+        dependencyURL=context.getResource(fromPath + "/" + artifactId+ ".jpi");
+      }
+      if (dependencyURL != null) {
+        addDependencies(dependencyURL,fromPath,dependencySet);
+        dependencySet.add(dependencyURL);
+      }
+    }
+  }
+}

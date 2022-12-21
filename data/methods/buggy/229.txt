@@ -1,0 +1,45 @@
+public Response resourceOwnerPasswordCredentialsGrant(){
+  event.detail(Details.AUTH_METHOD,"oauth_credentials");
+  if (!client.isDirectAccessGrantsEnabled()) {
+    event.error(Errors.NOT_ALLOWED);
+    throw new CorsErrorResponseException(cors,OAuthErrorException.UNAUTHORIZED_CLIENT,"Client not allowed for direct access grants",Response.Status.BAD_REQUEST);
+  }
+  if (client.isConsentRequired()) {
+    event.error(Errors.CONSENT_DENIED);
+    throw new CorsErrorResponseException(cors,OAuthErrorException.INVALID_CLIENT,"Client requires user consent",Response.Status.BAD_REQUEST);
+  }
+  String scope=getRequestedScopes();
+  RootAuthenticationSessionModel rootAuthSession=new AuthenticationSessionManager(session).createAuthenticationSession(realm,false);
+  AuthenticationSessionModel authSession=rootAuthSession.createAuthenticationSession(client);
+  authSession.setProtocol(OIDCLoginProtocol.LOGIN_PROTOCOL);
+  authSession.setAction(AuthenticatedClientSessionModel.Action.AUTHENTICATE.name());
+  authSession.setClientNote(OIDCLoginProtocol.ISSUER,Urls.realmIssuer(session.getContext().getUri().getBaseUri(),realm.getName()));
+  authSession.setClientNote(OIDCLoginProtocol.SCOPE_PARAM,scope);
+  AuthenticationFlowModel flow=AuthenticationFlowResolver.resolveDirectGrantFlow(authSession);
+  String flowId=flow.getId();
+  AuthenticationProcessor processor=new AuthenticationProcessor();
+  processor.setAuthenticationSession(authSession).setFlowId(flowId).setConnection(clientConnection).setEventBuilder(event).setRealm(realm).setSession(session).setUriInfo(session.getContext().getUri()).setRequest(request);
+  Response challenge=processor.authenticateOnly();
+  if (challenge != null) {
+    cors.build(httpResponse);
+    return challenge;
+  }
+  processor.evaluateRequiredActionTriggers();
+  UserModel user=authSession.getAuthenticatedUser();
+  if (user.getRequiredActions() != null && user.getRequiredActions().size() > 0) {
+    event.error(Errors.RESOLVE_REQUIRED_ACTIONS);
+    throw new CorsErrorResponseException(cors,OAuthErrorException.INVALID_GRANT,"Account is not fully set up",Response.Status.BAD_REQUEST);
+  }
+  AuthenticationManager.setClientScopesInSession(authSession);
+  ClientSessionContext clientSessionCtx=processor.attachSession();
+  UserSessionModel userSession=processor.getUserSession();
+  updateUserSessionFromClientAuth(userSession);
+  TokenManager.AccessTokenResponseBuilder responseBuilder=tokenManager.responseBuilder(realm,client,event,session,userSession,clientSessionCtx).generateAccessToken().generateRefreshToken();
+  String scopeParam=clientSessionCtx.getClientSession().getNote(OAuth2Constants.SCOPE);
+  if (TokenUtil.isOIDCRequest(scopeParam)) {
+    responseBuilder.generateIDToken().generateAccessTokenHash();
+  }
+  AccessTokenResponse res=responseBuilder.build();
+  event.success();
+  return cors.builder(Response.ok(res,MediaType.APPLICATION_JSON_TYPE)).build();
+}

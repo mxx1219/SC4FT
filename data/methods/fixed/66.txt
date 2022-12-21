@@ -1,0 +1,10 @@
+private void updateList(){
+  Stream<Tradable> concat1=Stream.concat(openOfferManager.getOpenOffers().stream(),tradeManager.getTrades().stream());
+  Stream<Tradable> concat2=Stream.concat(concat1,closedTradableManager.getClosedTrades().stream());
+  Stream<Tradable> concat3=Stream.concat(concat2,failedTradesManager.getFailedTrades().stream());
+  Set<Tradable> all=concat3.collect(Collectors.toSet());
+  Set<Transaction> transactions=btcWalletService.getTransactions(false);
+  List<TransactionsListItem> transactionsListItems=transactions.stream().map(null).collect(Collectors.toList());
+  observableList.forEach(null);
+  observableList.setAll(transactionsListItems);
+}

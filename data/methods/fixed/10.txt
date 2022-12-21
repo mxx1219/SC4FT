@@ -1,0 +1,19 @@
+public void setVerticalWallpaperOffset(WallpaperVerticalOffset offsetPosition){
+  float offset=0.5f;
+  Display display=mLauncher.getWindowManager().getDefaultDisplay();
+  int wallpaperTravelHeight=(int)(display.getHeight() * wallpaperTravelToScreenHeightRatio(display.getWidth(),display.getHeight()));
+  float offsetFromCenter=(wallpaperTravelHeight / (float)mWallpaperHeight) / 2f;
+switch (offsetPosition) {
+case TOP:
+    offset=0.5f - offsetFromCenter;
+  break;
+case MIDDLE:
+offset=0.5f;
+break;
+case BOTTOM:
+offset=0.5f + offsetFromCenter;
+break;
+}
+mTargetVerticalWallpaperOffset=offset;
+mWallpaperOffsetDirty=true;
+}

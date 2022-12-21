@@ -1,0 +1,13 @@
+public boolean printableObject(double beam,String nilLabel){
+  if (typeProbabilities == null) {
+    return false;
+  }
+  List<Pair<String,Double>> sorted=Counters.toDescendingMagnitudeSortedListWithCounts(typeProbabilities);
+  if (sorted.size() > 0 && !sorted.get(0).first.equals(nilLabel)) {
+    return true;
+  }
+  if (sorted.size() > 1 && sorted.get(0).first.equals(nilLabel) && beam > 0 && 100.0 * (sorted.get(0).second - sorted.get(1).second) < beam) {
+    return true;
+  }
+  return false;
+}

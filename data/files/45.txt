@@ -1,0 +1,504 @@
+package net.java.sip.communicator.impl.msghistory;
+import java.beans.*;
+import java.io.*;
+import java.text.*;
+import java.util.*;
+import java.util.regex.*;
+import net.java.sip.communicator.service.contactsource.*;
+import net.java.sip.communicator.service.history.*;
+import net.java.sip.communicator.service.history.records.*;
+import net.java.sip.communicator.service.msghistory.*;
+import net.java.sip.communicator.service.muc.*;
+import net.java.sip.communicator.service.protocol.*;
+import net.java.sip.communicator.service.protocol.event.*;
+import org.jitsi.service.configuration.*;
+import org.jitsi.util.*;
+import net.java.sip.communicator.service.history.HistoryService.DATE_FORMAT;
+public class MessageSourceService implements ContactSourceService, ContactPresenceStatusListener, ContactCapabilitiesListener, ProviderPresenceStatusListener, SubscriptionListener, LocalUserChatRoomPresenceListener, MessageListener, ChatRoomMessageListener, AdHocChatRoomMessageListener {
+  private static Logger logger=Logger.getLogger(MessageSourceService.class);
+  private final String MESSAGE_HISTORY_NAME;
+  private int sourceServiceType=RECENT_MESSAGES_TYPE;
+  private static final String IN_HISTORY_PROPERTY="net.java.sip.communicator.impl.msghistory.contactsrc.IN_HISTORY";
+  private static final String NUMBER_OF_RECENT_MSGS_PROP="net.java.sip.communicator.impl.msghistory.contactsrc.MSG_NUMBER";
+  private static final String VER_OF_RECENT_MSGS_PROP="net.java.sip.communicator.impl.msghistory.contactsrc.MSG_VER";
+  private static final String IS_MESSAGE_SUBTYPE_SMS_PROP="net.java.sip.communicator.impl.msghistory.contactsrc.IS_SMS_ENABLED";
+  private static final int NUMBER_OF_MSGS_IN_HISTORY=100;
+  private int numberOfMessages=10;
+  private static final String[] STRUCTURE_NAMES=new String[]{"provider","contact","timestamp","ver"};
+  private static String RECENT_MSGS_VER="2";
+  private static final HistoryRecordStructure recordStructure=new HistoryRecordStructure(STRUCTURE_NAMES);
+  private static final HistoryID historyID=HistoryID.createFromRawID(new String[]{"recent_messages"});
+  private History history=null;
+  private List<MessageSourceContact> recentMessages=new LinkedList<MessageSourceContact>();
+  private Date oldestRecentMessage=null;
+  private MessageHistoryContactQuery recentQuery=null;
+  private boolean isSMSEnabled=false;
+  private MessageHistoryServiceImpl messageHistoryService;
+  MessageSourceService(  MessageHistoryServiceImpl messageHistoryService){
+    this.messageHistoryService=messageHistoryService;
+    ConfigurationService conf=MessageHistoryActivator.getConfigurationService();
+    if (conf.getBoolean(IN_HISTORY_PROPERTY,false)) {
+      sourceServiceType=HISTORY_TYPE;
+    }
+    MESSAGE_HISTORY_NAME=MessageHistoryActivator.getResources().getI18NString("service.gui.RECENT_MESSAGES");
+    numberOfMessages=conf.getInt(NUMBER_OF_RECENT_MSGS_PROP,numberOfMessages);
+    isSMSEnabled=conf.getBoolean(IS_MESSAGE_SUBTYPE_SMS_PROP,isSMSEnabled);
+    RECENT_MSGS_VER=conf.getString(VER_OF_RECENT_MSGS_PROP,RECENT_MSGS_VER);
+    MessageSourceContactPresenceStatus.MSG_SRC_CONTACT_ONLINE.setStatusIcon(MessageHistoryActivator.getResources().getImageInBytes("service.gui.icons.SMS_STATUS_ICON"));
+  }
+  @Override public String getDisplayName(){
+    return MESSAGE_HISTORY_NAME;
+  }
+  @Override public int getType(){
+    return sourceServiceType;
+  }
+  @Override public int getIndex(){
+    return 0;
+  }
+  @Override public ContactQuery createContactQuery(  String queryString){
+    recentQuery=(MessageHistoryContactQuery)createContactQuery(queryString,numberOfMessages);
+    return recentQuery;
+  }
+  private List<MessageSourceContact> getSourceContacts(  ProtocolProviderService provider,  boolean isStatusChanged){
+    String providerID=provider.getAccountID().getAccountUniqueID();
+    List<String> recentMessagesContactIDs=getRecentContactIDs(providerID,recentMessages.size() < numberOfMessages ? null : oldestRecentMessage);
+    List<MessageSourceContact> sourceContactsToAdd=new ArrayList<MessageSourceContact>();
+    for (    String contactID : recentMessagesContactIDs) {
+      Collection<EventObject> res=messageHistoryService.findRecentMessagesPerContact(numberOfMessages,providerID,contactID,isSMSEnabled);
+      processEventObjects(res,sourceContactsToAdd,isStatusChanged);
+    }
+    return sourceContactsToAdd;
+  }
+  private void processEventObjects(  Collection<EventObject> res,  List<MessageSourceContact> sourceContactsToAdd,  boolean isStatusChanged){
+    for (    EventObject obj : res) {
+      MessageSourceContact msc=findMessageSourceContact(obj,recentMessages);
+      if (msc != null) {
+        msc.update(obj);
+        if (isStatusChanged)         msc.initDetails(obj);
+        if (!sourceContactsToAdd.contains(msc))         sourceContactsToAdd.add(msc);
+        continue;
+      }
+      msc=findMessageSourceContact(obj,sourceContactsToAdd);
+      if (msc == null) {
+        msc=new MessageSourceContact(obj,MessageSourceService.this);
+        if (isStatusChanged)         msc.initDetails(obj);
+        sourceContactsToAdd.add(msc);
+      }
+    }
+  }
+  boolean isSMSEnabled(){
+    return isSMSEnabled;
+  }
+  private void addNewRecentMessages(  List<MessageSourceContact> contactsToAdd){
+    List<MessageSourceContact> duplicates=new ArrayList<MessageSourceContact>();
+    for (    MessageSourceContact msc : recentMessages) {
+      for (      MessageSourceContact mscToAdd : contactsToAdd) {
+        if (mscToAdd.equals(msc)) {
+          duplicates.add(msc);
+          updateRecentMessageToHistory(msc);
+        }
+      }
+    }
+    if (!duplicates.isEmpty()) {
+      contactsToAdd.removeAll(duplicates);
+      Collections.sort(recentMessages);
+      if (recentQuery != null) {
+        for (        MessageSourceContact msc : duplicates)         recentQuery.fireContactChanged(msc);
+      }
+      return;
+    }
+    recentMessages.addAll(contactsToAdd);
+    Collections.sort(recentMessages);
+    if (!recentMessages.isEmpty())     oldestRecentMessage=recentMessages.get(recentMessages.size() - 1).getTimestamp();
+    List<MessageSourceContact> removedItems=null;
+    if (recentMessages.size() > numberOfMessages) {
+      removedItems=new ArrayList<MessageSourceContact>(recentMessages.subList(numberOfMessages,recentMessages.size()));
+      recentMessages.removeAll(removedItems);
+    }
+    if (recentQuery != null) {
+      if (removedItems != null) {
+        for (        MessageSourceContact msc : removedItems) {
+          if (!contactsToAdd.contains(msc))           recentQuery.fireContactRemoved(msc);
+        }
+      }
+      for (      MessageSourceContact msc : contactsToAdd) {
+        if (removedItems == null || !removedItems.contains(msc))         recentQuery.fireContactReceived(msc);
+      }
+    }
+  }
+  void handleProviderAdded(  final ProtocolProviderService provider,  final boolean isStatusChanged){
+    new Thread(new Runnable(){
+      @Override public void run(){
+        handleProviderAddedInSeparateThread(provider,isStatusChanged);
+      }
+    }
+).start();
+  }
+  private void handleProviderAddedInSeparateThread(  ProtocolProviderService provider,  boolean isStatusChanged){
+synchronized (recentMessages) {
+      List<MessageSourceContact> sourceContactsToAdd=getSourceContacts(provider,isStatusChanged);
+      if (sourceContactsToAdd.isEmpty()) {
+        Collection<EventObject> res=messageHistoryService.findRecentMessagesPerContact(numberOfMessages,provider.getAccountID().getAccountUniqueID(),null,isSMSEnabled);
+        List<MessageSourceContact> newMsc=new ArrayList<MessageSourceContact>();
+        processEventObjects(res,newMsc,isStatusChanged);
+        addNewRecentMessages(newMsc);
+        for (        MessageSourceContact msc : newMsc) {
+          saveRecentMessageToHistory(msc);
+        }
+      }
+ else       addNewRecentMessages(sourceContactsToAdd);
+    }
+  }
+  private static MessageSourceContact findMessageSourceContact(  EventObject obj,  List<MessageSourceContact> list){
+    Contact contact=null;
+    ChatRoom chatRoom=null;
+    if (obj instanceof MessageDeliveredEvent) {
+      contact=((MessageDeliveredEvent)obj).getDestinationContact();
+    }
+ else     if (obj instanceof MessageReceivedEvent) {
+      contact=((MessageReceivedEvent)obj).getSourceContact();
+    }
+ else     if (obj instanceof ChatRoomMessageDeliveredEvent) {
+      chatRoom=((ChatRoomMessageDeliveredEvent)obj).getSourceChatRoom();
+    }
+ else     if (obj instanceof ChatRoomMessageReceivedEvent) {
+      chatRoom=((ChatRoomMessageDeliveredEvent)obj).getSourceChatRoom();
+    }
+    for (    MessageSourceContact msc : list) {
+      if ((contact != null && contact.equals(msc.getContact())) || (chatRoom != null && chatRoom.equals(msc.getRoom())))       return msc;
+    }
+    return null;
+  }
+  void handleProviderRemoved(  ProtocolProviderService provider){
+synchronized (recentMessages) {
+      if (provider != null) {
+        List<MessageSourceContact> removedItems=new ArrayList<MessageSourceContact>();
+        for (        MessageSourceContact msc : recentMessages) {
+          if (msc.getProtocolProviderService().equals(provider))           removedItems.add(msc);
+        }
+        recentMessages.removeAll(removedItems);
+        if (!recentMessages.isEmpty())         oldestRecentMessage=recentMessages.get(recentMessages.size() - 1).getTimestamp();
+ else         oldestRecentMessage=null;
+        if (recentQuery != null) {
+          for (          MessageSourceContact msc : removedItems) {
+            recentQuery.fireContactRemoved(msc);
+          }
+        }
+      }
+      List<MessageSourceContact> contactsToAdd=new ArrayList<MessageSourceContact>();
+      for (      ProtocolProviderService pps : messageHistoryService.getCurrentlyAvailableProviders()) {
+        contactsToAdd.addAll(getSourceContacts(pps,true));
+      }
+      addNewRecentMessages(contactsToAdd);
+    }
+  }
+  List<String> getRecentContactIDs(  String provider,  Date after){
+    List<String> res=new ArrayList<String>();
+    try {
+      History history=getHistory();
+      if (history != null) {
+        Iterator<HistoryRecord> recs=history.getReader().findLast(NUMBER_OF_MSGS_IN_HISTORY);
+        SimpleDateFormat sdf=new SimpleDateFormat(DATE_FORMAT);
+        while (recs.hasNext()) {
+          HistoryRecord hr=recs.next();
+          String contact=null;
+          String recordProvider=null;
+          Date timestamp=null;
+          for (int i=0; i < hr.getPropertyNames().length; i++) {
+            String propName=hr.getPropertyNames()[i];
+            if (propName.equals(STRUCTURE_NAMES[0]))             recordProvider=hr.getPropertyValues()[i];
+ else             if (propName.equals(STRUCTURE_NAMES[1]))             contact=hr.getPropertyValues()[i];
+ else             if (propName.equals(STRUCTURE_NAMES[2])) {
+              try {
+                timestamp=sdf.parse(hr.getPropertyValues()[i]);
+              }
+ catch (              ParseException e) {
+                timestamp=new Date(Long.parseLong(hr.getPropertyValues()[i]));
+              }
+            }
+          }
+          if (recordProvider == null || contact == null)           continue;
+          if (after != null && timestamp != null && timestamp.before(after))           continue;
+          if (recordProvider.equals(provider))           res.add(contact);
+        }
+      }
+    }
+ catch (    IOException ex) {
+      logger.error("cannot create recent_messages history",ex);
+    }
+    return res;
+  }
+  private History getHistory() throws IOException {
+synchronized (historyID) {
+      HistoryService historyService=MessageHistoryActivator.getMessageHistoryService().getHistoryService();
+      if (history == null) {
+        if (historyService.isHistoryExisting(historyID))         history=historyService.getHistory(historyID);
+ else         history=historyService.createHistory(historyID,recordStructure);
+        HistoryReader reader=history.getReader();
+        boolean delete=false;
+        QueryResultSet<HistoryRecord> res=reader.findLast(1);
+        if (res != null && res.hasNext()) {
+          HistoryRecord hr=res.next();
+          if (hr.getPropertyValues().length >= 4) {
+            if (!hr.getPropertyValues()[3].equals(RECENT_MSGS_VER))             delete=true;
+          }
+ else           delete=true;
+        }
+        if (delete) {
+          try {
+            historyService.purgeLocallyStoredHistory(historyID);
+            history=historyService.createHistory(historyID,recordStructure);
+          }
+ catch (          IOException ex) {
+            logger.error("Cannot delete recent_messages history",ex);
+          }
+        }
+      }
+      return history;
+    }
+  }
+  int getIndex(  MessageSourceContact messageSourceContact){
+synchronized (recentMessages) {
+      return recentMessages.indexOf(messageSourceContact);
+    }
+  }
+  @Override public ContactQuery createContactQuery(  String queryString,  int contactCount){
+    if (!StringUtils.isNullOrEmpty(queryString))     return null;
+    recentQuery=new MessageHistoryContactQuery(numberOfMessages);
+    return recentQuery;
+  }
+  @Override public void contactPresenceStatusChanged(  ContactPresenceStatusChangeEvent evt){
+    if (recentQuery == null)     return;
+synchronized (recentMessages) {
+      for (      MessageSourceContact msgSC : recentMessages) {
+        if (msgSC.getContact() != null && msgSC.getContact().equals(evt.getSourceContact())) {
+          msgSC.setStatus(evt.getNewStatus());
+          recentQuery.fireContactChanged(msgSC);
+        }
+      }
+    }
+  }
+  @Override public void providerStatusChanged(  ProviderPresenceStatusChangeEvent evt){
+    if (!evt.getNewStatus().isOnline() || evt.getOldStatus().isOnline())     return;
+    handleProviderAdded(evt.getProvider(),true);
+  }
+  @Override public void providerStatusMessageChanged(  PropertyChangeEvent evt){
+  }
+  @Override public void localUserPresenceChanged(  LocalUserChatRoomPresenceChangeEvent evt){
+    if (recentQuery == null)     return;
+    MessageSourceContact srcContact=null;
+synchronized (recentMessages) {
+      for (      MessageSourceContact msg : recentMessages) {
+        if (msg.getRoom() != null && msg.getRoom().equals(evt.getChatRoom())) {
+          srcContact=msg;
+          break;
+        }
+      }
+    }
+    if (srcContact == null)     return;
+    String eventType=evt.getEventType();
+    if (LocalUserChatRoomPresenceChangeEvent.LOCAL_USER_JOINED.equals(eventType)) {
+      srcContact.setStatus(ChatRoomPresenceStatus.CHAT_ROOM_ONLINE);
+      recentQuery.fireContactChanged(srcContact);
+    }
+ else     if ((LocalUserChatRoomPresenceChangeEvent.LOCAL_USER_LEFT.equals(eventType) || LocalUserChatRoomPresenceChangeEvent.LOCAL_USER_KICKED.equals(eventType) || LocalUserChatRoomPresenceChangeEvent.LOCAL_USER_DROPPED.equals(eventType))) {
+      srcContact.setStatus(ChatRoomPresenceStatus.CHAT_ROOM_OFFLINE);
+      recentQuery.fireContactChanged(srcContact);
+    }
+  }
+  private void handle(  EventObject obj,  ProtocolProviderService provider,  String id){
+synchronized (recentMessages) {
+      MessageSourceContact existingMsc=null;
+      for (      MessageSourceContact msc : recentMessages) {
+        if (msc.getProtocolProviderService().equals(provider) && msc.getContactAddress().equals(id)) {
+          msc.update(obj);
+          updateRecentMessageToHistory(msc);
+          existingMsc=msc;
+        }
+      }
+      if (existingMsc != null) {
+        Collections.sort(recentMessages);
+        oldestRecentMessage=recentMessages.get(recentMessages.size() - 1).getTimestamp();
+        if (recentQuery != null)         recentQuery.fireContactChanged(existingMsc);
+        return;
+      }
+      MessageSourceContact newSourceContact=new MessageSourceContact(obj,MessageSourceService.this);
+      newSourceContact.initDetails(obj);
+      recentMessages.add(newSourceContact);
+      Collections.sort(recentMessages);
+      oldestRecentMessage=recentMessages.get(recentMessages.size() - 1).getTimestamp();
+      List<MessageSourceContact> removedItems=null;
+      if (recentMessages.size() > numberOfMessages) {
+        removedItems=new ArrayList<MessageSourceContact>(recentMessages.subList(numberOfMessages,recentMessages.size()));
+        recentMessages.removeAll(removedItems);
+      }
+      saveRecentMessageToHistory(newSourceContact);
+      if (recentQuery == null)       return;
+      if (removedItems != null) {
+        for (        MessageSourceContact msc : removedItems) {
+          recentQuery.fireContactRemoved(msc);
+        }
+      }
+      recentQuery.fireContactReceived(newSourceContact);
+    }
+  }
+  private void saveRecentMessageToHistory(  MessageSourceContact msc){
+synchronized (historyID) {
+      try {
+        History history=getHistory();
+        HistoryWriter writer=history.getWriter();
+synchronized (recentMessages) {
+          SimpleDateFormat sdf=new SimpleDateFormat(DATE_FORMAT);
+          writer.addRecord(new String[]{msc.getProtocolProviderService().getAccountID().getAccountUniqueID(),msc.getContactAddress(),sdf.format(msc.getTimestamp()),RECENT_MSGS_VER},NUMBER_OF_MSGS_IN_HISTORY);
+        }
+      }
+ catch (      IOException ex) {
+        logger.error("cannot create recent_messages history",ex);
+        return;
+      }
+    }
+  }
+  private void updateRecentMessageToHistory(  final MessageSourceContact msc){
+synchronized (historyID) {
+      try {
+        History history=getHistory();
+        HistoryWriter writer=history.getWriter();
+synchronized (recentMessages) {
+          writer.updateRecord(new HistoryWriter.HistoryRecordUpdater(){
+            HistoryRecord hr;
+            @Override public void setHistoryRecord(            HistoryRecord historyRecord){
+              this.hr=historyRecord;
+            }
+            @Override public boolean isMatching(){
+              boolean providerFound=false;
+              boolean contactFound=false;
+              for (int i=0; i < hr.getPropertyNames().length; i++) {
+                String propName=hr.getPropertyNames()[i];
+                if (propName.equals(STRUCTURE_NAMES[0])) {
+                  if (msc.getProtocolProviderService().getAccountID().getAccountUniqueID().equals(hr.getPropertyValues()[i])) {
+                    providerFound=true;
+                  }
+                }
+ else                 if (propName.equals(STRUCTURE_NAMES[1])) {
+                  if (msc.getContactAddress().equals(hr.getPropertyValues()[i])) {
+                    contactFound=true;
+                  }
+                }
+              }
+              return contactFound && providerFound;
+            }
+            @Override public Map<String,String> getUpdateChanges(){
+              HashMap<String,String> map=new HashMap<String,String>();
+              SimpleDateFormat sdf=new SimpleDateFormat(DATE_FORMAT);
+              for (int i=0; i < hr.getPropertyNames().length; i++) {
+                String propName=hr.getPropertyNames()[i];
+                if (propName.equals(STRUCTURE_NAMES[0])) {
+                  map.put(propName,msc.getProtocolProviderService().getAccountID().getAccountUniqueID());
+                }
+ else                 if (propName.equals(STRUCTURE_NAMES[1])) {
+                  map.put(propName,msc.getContactAddress());
+                }
+ else                 if (propName.equals(STRUCTURE_NAMES[2])) {
+                  map.put(propName,sdf.format(msc.getTimestamp()));
+                }
+ else                 if (propName.equals(STRUCTURE_NAMES[3]))                 map.put(propName,RECENT_MSGS_VER);
+              }
+              return map;
+            }
+          }
+);
+        }
+      }
+ catch (      IOException ex) {
+        logger.error("cannot create recent_messages history",ex);
+        return;
+      }
+    }
+  }
+  @Override public void messageReceived(  MessageReceivedEvent evt){
+    if (isSMSEnabled && evt.getEventType() != MessageReceivedEvent.SMS_MESSAGE_RECEIVED) {
+      return;
+    }
+    handle(evt,evt.getSourceContact().getProtocolProvider(),evt.getSourceContact().getAddress());
+  }
+  @Override public void messageDelivered(  MessageDeliveredEvent evt){
+    if (isSMSEnabled && !evt.isSmsMessage())     return;
+    handle(evt,evt.getDestinationContact().getProtocolProvider(),evt.getDestinationContact().getAddress());
+  }
+  @Override public void messageDeliveryFailed(  MessageDeliveryFailedEvent evt){
+  }
+  @Override public void messageReceived(  ChatRoomMessageReceivedEvent evt){
+    if (isSMSEnabled)     return;
+    if (evt.getEventType() != ChatRoomMessageReceivedEvent.CONVERSATION_MESSAGE_RECEIVED)     return;
+    handle(evt,evt.getSourceChatRoom().getParentProvider(),evt.getSourceChatRoom().getIdentifier());
+  }
+  @Override public void messageDelivered(  ChatRoomMessageDeliveredEvent evt){
+    if (isSMSEnabled)     return;
+    handle(evt,evt.getSourceChatRoom().getParentProvider(),evt.getSourceChatRoom().getIdentifier());
+  }
+  @Override public void messageDeliveryFailed(  ChatRoomMessageDeliveryFailedEvent evt){
+  }
+  @Override public void messageReceived(  AdHocChatRoomMessageReceivedEvent evt){
+  }
+  @Override public void messageDelivered(  AdHocChatRoomMessageDeliveredEvent evt){
+  }
+  @Override public void messageDeliveryFailed(  AdHocChatRoomMessageDeliveryFailedEvent evt){
+  }
+  @Override public void subscriptionCreated(  SubscriptionEvent evt){
+  }
+  @Override public void subscriptionFailed(  SubscriptionEvent evt){
+  }
+  @Override public void subscriptionRemoved(  SubscriptionEvent evt){
+  }
+  @Override public void subscriptionMoved(  SubscriptionMovedEvent evt){
+  }
+  @Override public void subscriptionResolved(  SubscriptionEvent evt){
+  }
+  @Override public void contactModified(  ContactPropertyChangeEvent evt){
+    if (!evt.getPropertyName().equals(ContactPropertyChangeEvent.PROPERTY_DISPLAY_NAME))     return;
+    Contact contact=evt.getSourceContact();
+    if (contact == null)     return;
+    for (    MessageSourceContact msc : recentMessages) {
+      if (contact.equals(msc.getContact())) {
+        msc.setDisplayName(contact.getDisplayName());
+        if (recentQuery != null)         recentQuery.fireContactChanged(msc);
+        return;
+      }
+    }
+  }
+  @Override public void supportedOperationSetsChanged(  ContactCapabilitiesEvent event){
+    Contact contact=event.getSourceContact();
+    if (contact == null)     return;
+    for (    MessageSourceContact msc : recentMessages) {
+      if (contact.equals(msc.getContact())) {
+        msc.initDetails(false,contact);
+        if (recentQuery != null)         recentQuery.fireContactChanged(msc);
+        return;
+      }
+    }
+  }
+private class MessageHistoryContactQuery extends AsyncContactQuery<MessageSourceService> {
+    MessageHistoryContactQuery(    int contactCount){
+      super(MessageSourceService.this,Pattern.compile("",Pattern.CASE_INSENSITIVE | Pattern.LITERAL),false);
+    }
+    @Override public void run(){
+synchronized (recentMessages) {
+        for (        MessageSourceContact rm : recentMessages) {
+          addQueryResult(rm);
+        }
+      }
+    }
+    public void fireContactReceived(    SourceContact contact){
+      fireContactReceived(contact,false);
+    }
+    public void fireContactChanged(    SourceContact contact){
+      super.fireContactChanged(contact);
+    }
+    public void fireContactRemoved(    SourceContact contact){
+      super.fireContactRemoved(contact);
+    }
+    public boolean addQueryResult(    SourceContact sourceContact){
+      return super.addQueryResult(sourceContact);
+    }
+  }
+}

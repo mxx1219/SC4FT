@@ -1,0 +1,24 @@
+private URL mergeUrl(URL providerUrl){
+  Map<String,String> alloverride=overrideMap == null ? new HashMap<String,String>() : overrideMap.get(Constants.ANY_VALUE);
+  providerUrl=ClusterUtils.mergeUrl(providerUrl,queryMap);
+  providerUrl=providerUrl.addParameter(Constants.CHECK_KEY,String.valueOf(false));
+  providerUrl=providerUrl.addParameters(alloverride);
+  Map<String,String> oneOverride=overrideMap == null ? null : overrideMap.get(providerUrl.getAddress());
+  if (oneOverride != null && overrideMap.get(providerUrl.getAddress()).size() > 0) {
+    providerUrl=providerUrl.addParameters(oneOverride);
+  }
+  this.directoryUrl=this.directoryUrl.addParametersIfAbsent(providerUrl.getParameters());
+  if ((providerUrl.getPath() == null || providerUrl.getPath().length() == 0) && "dubbo".equals(providerUrl.getProtocol())) {
+    String path=directoryUrl.getParameter(Constants.INTERFACE_KEY);
+    int i=path.indexOf('/');
+    if (i >= 0) {
+      path=path.substring(i + 1);
+    }
+    i=path.lastIndexOf(':');
+    if (i >= 0) {
+      path=path.substring(0,i);
+    }
+    providerUrl=providerUrl.setPath(path);
+  }
+  return providerUrl;
+}

@@ -1,0 +1,6 @@
+@Override protected void resolveRequest(ClusterState state,InternalRequest request){
+  request.request().routing(state.metaData().resolveIndexRouting(request.request().routing(),request.request().index()));
+  if (request.request().routing() == null && state.getMetaData().routingRequired(request.concreteIndex(),request.request().type())) {
+    throw new RoutingMissingException(request.concreteIndex(),request.request().type(),request.request().id());
+  }
+}

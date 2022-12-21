@@ -1,0 +1,21 @@
+@Override public void after(Object target,Object arg0,Object arg1,Object result,Throwable throwable){
+  if (logger.isDebugEnabled()) {
+    logger.afterInterceptor(target,new Object[]{arg0,arg1},result,throwable);
+  }
+  final Trace trace=traceContext.currentTraceObject();
+  if (trace == null) {
+    return;
+  }
+  try {
+    SpanEventRecorder recorder=trace.currentSpanEventRecorder();
+    recorder.recordServiceType(GsonConstants.GSON_SERVICE_TYPE);
+    recorder.recordApi(descriptor);
+    recorder.recordException(throwable);
+    if (arg0 instanceof String) {
+      recorder.recordAttribute(GsonConstants.GSON_ANNOTATION_KEY_JSON_LENGTH,((String)arg0).length());
+    }
+  }
+  finally {
+    trace.traceBlockEnd();
+  }
+}

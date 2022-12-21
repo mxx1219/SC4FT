@@ -1,0 +1,172 @@
+package org.apache.jmeter.protocol.java.config.gui;
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Font;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import javax.swing.ImageIcon;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.SwingConstants;
+import javax.swing.event.ChangeEvent;
+import javax.swing.event.ChangeListener;
+import org.apache.commons.lang3.ArrayUtils;
+import org.apache.jmeter.config.Argument;
+import org.apache.jmeter.config.Arguments;
+import org.apache.jmeter.config.gui.AbstractConfigGui;
+import org.apache.jmeter.config.gui.ArgumentsPanel;
+import org.apache.jmeter.gui.util.VerticalPanel;
+import org.apache.jmeter.protocol.java.config.JavaConfig;
+import org.apache.jmeter.protocol.java.sampler.JavaSampler;
+import org.apache.jmeter.protocol.java.sampler.JavaSamplerClient;
+import org.apache.jmeter.testelement.TestElement;
+import org.apache.jmeter.testelement.property.JMeterProperty;
+import org.apache.jmeter.util.JMeterUtils;
+import org.apache.jorphan.gui.JLabeledChoice;
+import org.apache.jorphan.logging.LoggingManager;
+import org.apache.jorphan.reflect.ClassFinder;
+import org.apache.log.Logger;
+public class JavaConfigGui extends AbstractConfigGui implements ChangeListener {
+  private static final long serialVersionUID=241L;
+  private static final Logger log=LoggingManager.getLoggerForClass();
+  private JLabeledChoice classNameLabeledChoice;
+  private boolean displayName=true;
+  private ArgumentsPanel argsPanel;
+  private final JLabel warningLabel;
+  public JavaConfigGui(){
+    this(true);
+  }
+  public JavaConfigGui(  boolean displayNameField){
+    this.displayName=displayNameField;
+    ImageIcon image=JMeterUtils.getImage("warning.png");
+    warningLabel=new JLabel(JMeterUtils.getResString("java_request_warning"),image,SwingConstants.LEFT);
+    init();
+  }
+  @Override public String getLabelResource(){
+    return "java_request_defaults";
+  }
+  private final void init(){
+    setLayout(new BorderLayout(0,5));
+    if (displayName) {
+      setBorder(makeBorder());
+      add(makeTitlePanel(),BorderLayout.NORTH);
+    }
+    JPanel classnameRequestPanel=new JPanel(new BorderLayout(0,5));
+    classnameRequestPanel.add(createClassnamePanel(),BorderLayout.NORTH);
+    classnameRequestPanel.add(createParameterPanel(),BorderLayout.CENTER);
+    add(classnameRequestPanel,BorderLayout.CENTER);
+  }
+  private JPanel createClassnamePanel(){
+    List<String> possibleClasses=new ArrayList<>();
+    try {
+      possibleClasses=ClassFinder.findClassesThatExtend(JMeterUtils.getSearchPaths(),new Class[]{JavaSamplerClient.class});
+      possibleClasses.remove(JavaSampler.class.getName() + "$ErrorSamplerClient");
+    }
+ catch (    Exception e) {
+      log.debug("Exception getting interfaces.",e);
+    }
+    classNameLabeledChoice=new JLabeledChoice(JMeterUtils.getResString("protocol_java_classname"),possibleClasses.toArray(ArrayUtils.EMPTY_STRING_ARRAY),true,false);
+    classNameLabeledChoice.addChangeListener(this);
+    warningLabel.setForeground(Color.RED);
+    Font font=warningLabel.getFont();
+    warningLabel.setFont(new Font(font.getFontName(),Font.BOLD,(int)(font.getSize() * 1.1)));
+    warningLabel.setVisible(false);
+    VerticalPanel panel=new VerticalPanel();
+    panel.add(classNameLabeledChoice);
+    panel.add(warningLabel);
+    return panel;
+  }
+  @Override public void stateChanged(  ChangeEvent evt){
+    if (evt.getSource() == classNameLabeledChoice) {
+      String className=classNameLabeledChoice.getText().trim();
+      try {
+        JavaSamplerClient client=(JavaSamplerClient)Class.forName(className,true,Thread.currentThread().getContextClassLoader()).newInstance();
+        Arguments currArgs=new Arguments();
+        argsPanel.modifyTestElement(currArgs);
+        Map<String,String> currArgsMap=currArgs.getArgumentsAsMap();
+        Arguments newArgs=new Arguments();
+        Arguments testParams=null;
+        try {
+          testParams=client.getDefaultParameters();
+        }
+ catch (        AbstractMethodError e) {
+          log.warn("JavaSamplerClient doesn't implement " + "getDefaultParameters.  Default parameters won't " + "be shown.  Please update your client class: "+ className);
+        }
+        if (testParams != null) {
+          for (          JMeterProperty jMeterProperty : testParams.getArguments()) {
+            Argument arg=(Argument)jMeterProperty.getObjectValue();
+            String name=arg.getName();
+            String value=arg.getValue();
+            if (currArgsMap.containsKey(name)) {
+              String newVal=currArgsMap.get(name);
+              if (newVal != null && newVal.length() > 0) {
+                value=newVal;
+              }
+            }
+            newArgs.addArgument(name,value);
+          }
+        }
+        argsPanel.configure(newArgs);
+        warningLabel.setVisible(false);
+      }
+ catch (      Exception e) {
+        log.error("Error getting argument list for " + className,e);
+        warningLabel.setVisible(true);
+      }
+    }
+  }
+  private JPanel createParameterPanel(){
+    argsPanel=new ArgumentsPanel(JMeterUtils.getResString("paramtable"));
+    return argsPanel;
+  }
+  @Override public void configure(  TestElement config){
+    super.configure(config);
+    argsPanel.configure((Arguments)config.getProperty(JavaSampler.ARGUMENTS).getObjectValue());
+    String className=config.getPropertyAsString(JavaSampler.CLASSNAME);
+    if (!checkContainsClassName(classNameLabeledChoice,className)) {
+      classNameLabeledChoice.addValue(className);
+    }
+    if (!classOk(className)) {
+      log.error("Error setting class:'" + className + "' in JavaSampler "+ getName()+ ", check for a missing jar in your jmeter 'search_paths' and 'plugin_dependency_paths' properties");
+      warningLabel.setVisible(true);
+    }
+ else {
+      warningLabel.setVisible(false);
+    }
+    classNameLabeledChoice.setText(className);
+  }
+  private static boolean classOk(  String className){
+    try {
+      JavaSamplerClient client=(JavaSamplerClient)Class.forName(className,true,Thread.currentThread().getContextClassLoader()).newInstance();
+      return client instanceof JavaSamplerClient;
+    }
+ catch (    Exception ex) {
+      return false;
+    }
+  }
+  private static boolean checkContainsClassName(  JLabeledChoice classnameChoice,  String className){
+    Set<String> set=new HashSet<>(Arrays.asList(classnameChoice.getItems()));
+    return set.contains(className);
+  }
+  @Override public TestElement createTestElement(){
+    JavaConfig config=new JavaConfig();
+    modifyTestElement(config);
+    return config;
+  }
+  @Override public void modifyTestElement(  TestElement config){
+    configureTestElement(config);
+    ((JavaConfig)config).setArguments((Arguments)argsPanel.createTestElement());
+    ((JavaConfig)config).setClassname(classNameLabeledChoice.getText().trim());
+  }
+  @Override public void clearGui(){
+    super.clearGui();
+    this.displayName=true;
+    this.warningLabel.setVisible(false);
+    argsPanel.clearGui();
+    classNameLabeledChoice.setSelectedIndex(0);
+  }
+}

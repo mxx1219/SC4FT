@@ -1,0 +1,8 @@
+@Override public Document getNextPage(Document doc) throws IOException {
+  if (urlType == UrlType.COMIC) {
+    ++chapterIndex;
+    imageIndex=0;
+    return Http.url(chaptersList.get(chapterIndex)).get();
+  }
+  return super.getNextPage(doc);
+}

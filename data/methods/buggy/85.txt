@@ -1,0 +1,29 @@
+protected void drawCenterText(Canvas c){
+  CharSequence centerText=mChart.getCenterText();
+  if (mChart.isDrawCenterTextEnabled() && centerText != null) {
+    PointF center=mChart.getCenterCircleBox();
+    float innerRadius=mChart.isDrawHoleEnabled() && mChart.isHoleTransparent() ? mChart.getRadius() * (mChart.getHoleRadius() / 100f) : mChart.getRadius();
+    RectF holeRect=mRectBuffer[0];
+    holeRect.left=center.x - innerRadius;
+    holeRect.top=center.y - innerRadius;
+    holeRect.right=center.x + innerRadius;
+    holeRect.bottom=center.y + innerRadius;
+    RectF boundingRect=mRectBuffer[1];
+    boundingRect.set(holeRect);
+    float radiusPercent=mChart.getCenterTextRadiusPercent() / 100f;
+    if (radiusPercent > 0.0) {
+      boundingRect.inset((boundingRect.width() - boundingRect.width() * radiusPercent) / 2.f,(boundingRect.height() - boundingRect.height() * radiusPercent) / 2.f);
+    }
+    if (!centerText.equals(mCenterTextLastValue) || !boundingRect.equals(mCenterTextLastBounds)) {
+      mCenterTextLastBounds.set(boundingRect);
+      mCenterTextLastValue=centerText;
+      float width=mCenterTextLastBounds.width();
+      mCenterTextLayout=new StaticLayout(centerText,0,centerText.length(),mCenterTextPaint,(int)Math.max(Math.ceil(width),1.f),Layout.Alignment.ALIGN_CENTER,1.f,0.f,false);
+    }
+    float layoutHeight=mCenterTextLayout.getHeight();
+    c.save();
+    c.translate(boundingRect.left,boundingRect.top + (boundingRect.height() - layoutHeight) / 2.f);
+    mCenterTextLayout.draw(c);
+    c.restore();
+  }
+}

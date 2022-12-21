@@ -1,0 +1,22 @@
+public void onBluetoothServiceDown(){
+  if (VDBG)   Log.d(TAG,"onBluetoothServiceDown: " + mService);
+synchronized (mManagerCallback) {
+    mService=null;
+    if (mLeScanClients != null)     mLeScanClients.clear();
+    if (sBluetoothLeAdvertiser != null)     sBluetoothLeAdvertiser.cleanup();
+    if (sBluetoothLeScanner != null)     sBluetoothLeScanner.cleanup();
+    for (    IBluetoothManagerCallback cb : mProxyServiceStateCallbacks) {
+      try {
+        if (cb != null) {
+          cb.onBluetoothServiceDown();
+        }
+ else {
+          Log.d(TAG,"onBluetoothServiceDown: cb is null!!!");
+        }
+      }
+ catch (      Exception e) {
+        Log.e(TAG,"",e);
+      }
+    }
+  }
+}

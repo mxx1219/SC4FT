@@ -1,0 +1,16 @@
+public void save(){
+  Map<String,Object> newMap=new HashMap<String,Object>();
+  newMap.put("session:creationTime",creationTime);
+  newMap.put("session:lastAccessedTime",lastAccessedTime);
+  newMap.put("session:thisAccessedTime",thisAccessedTime);
+  newMap.put("session:maxInactiveInterval",maxInactiveInterval);
+  newMap.put("session:isValid",isValid);
+  newMap.put("session:isNew",isNew);
+  for (  Entry<String,Object> entry : attrs.entrySet()) {
+    newMap.put(entry.getKey(),entry.getValue());
+  }
+  map.putAll(newMap);
+  if (maxInactiveInterval >= 0) {
+    map.expire(getMaxInactiveInterval(),TimeUnit.SECONDS);
+  }
+}

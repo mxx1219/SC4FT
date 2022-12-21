@@ -1,0 +1,280 @@
+package net.java.sip.communicator.impl.protocol.jabber;
+import java.util.*;
+import java.util.concurrent.*;
+import net.java.sip.communicator.impl.protocol.jabber.extensions.caps.*;
+import net.java.sip.communicator.service.protocol.*;
+import net.java.sip.communicator.util.*;
+import org.jivesoftware.smack.*;
+import org.jivesoftware.smack.filter.*;
+import org.jivesoftware.smack.packet.*;
+import org.jivesoftware.smackx.*;
+import org.jivesoftware.smackx.packet.*;
+public class ScServiceDiscoveryManager implements PacketInterceptor, NodeInformationProvider {
+  private static final Logger logger=Logger.getLogger(ScServiceDiscoveryManager.class);
+  private static final boolean CACHE_NON_CAPS=true;
+  private final Map<String,DiscoverInfo> nonCapsCache=new ConcurrentHashMap<String,DiscoverInfo>();
+  private final EntityCapsManager capsManager;
+  private final ServiceDiscoveryManager discoveryManager;
+  private final ProtocolProviderServiceJabberImpl parentProvider;
+  private final XMPPConnection connection;
+  private final List<String> features;
+  private final List<String> unmodifiableFeatures;
+  private final List<DiscoverInfo.Identity> identities;
+  private final List<String> extCapabilities=new ArrayList<String>();
+  private DiscoveryInfoRetriever retriever=new DiscoveryInfoRetriever();
+  public ScServiceDiscoveryManager(  ProtocolProviderServiceJabberImpl parentProvider,  String[] featuresToRemove,  String[] featuresToAdd){
+    this.parentProvider=parentProvider;
+    this.connection=parentProvider.getConnection();
+    this.discoveryManager=ServiceDiscoveryManager.getInstanceFor(connection);
+    this.features=new ArrayList<String>();
+    this.unmodifiableFeatures=Collections.unmodifiableList(this.features);
+    this.identities=new ArrayList<DiscoverInfo.Identity>();
+    DiscoverInfo.Identity identity=new DiscoverInfo.Identity("client",ServiceDiscoveryManager.getIdentityName());
+    identity.setType(ServiceDiscoveryManager.getIdentityType());
+    identities.add(identity);
+    discoveryManager.addFeature(CapsPacketExtension.NAMESPACE);
+    if (featuresToRemove != null) {
+      for (      String featureToRemove : featuresToRemove)       discoveryManager.removeFeature(featureToRemove);
+    }
+    if (featuresToAdd != null) {
+      for (      String featureToAdd : featuresToAdd)       if (!discoveryManager.includesFeature(featureToAdd))       discoveryManager.addFeature(featureToAdd);
+    }
+    this.capsManager=new EntityCapsManager();
+    capsManager.addPacketListener(connection);
+    initFeatures();
+    updateEntityCapsVersion();
+    connection.addPacketInterceptor(this,new PacketTypeFilter(Presence.class));
+  }
+  public void addFeature(  String feature){
+synchronized (features) {
+      features.add(feature);
+      discoveryManager.addFeature(feature);
+    }
+    updateEntityCapsVersion();
+  }
+  private void updateEntityCapsVersion(){
+    if ((connection instanceof XMPPConnection) && (capsManager != null))     capsManager.calculateEntityCapsVersion(getOwnDiscoverInfo());
+  }
+  public List<String> getFeatures(){
+    return unmodifiableFeatures;
+  }
+  public DiscoverInfo getOwnDiscoverInfo(){
+    DiscoverInfo di=new DiscoverInfo();
+    di.setType(IQ.Type.RESULT);
+    di.setNode(capsManager.getNode() + "#" + getEntityCapsVersion());
+    addDiscoverInfoTo(di);
+    return di;
+  }
+  private String getEntityCapsVersion(){
+    return (capsManager == null) ? null : capsManager.getCapsVersion();
+  }
+  private void addDiscoverInfoTo(  DiscoverInfo response){
+    DiscoverInfo.Identity identity=new DiscoverInfo.Identity("client",ServiceDiscoveryManager.getIdentityName());
+    identity.setType(ServiceDiscoveryManager.getIdentityType());
+    response.addIdentity(identity);
+    if (!response.containsFeature(CapsPacketExtension.NAMESPACE))     response.addFeature(CapsPacketExtension.NAMESPACE);
+    Iterable<String> features=getFeatures();
+synchronized (features) {
+      for (      String feature : features)       if (!response.containsFeature(feature))       response.addFeature(feature);
+    }
+  }
+  public boolean includesFeature(  String feature){
+    return this.discoveryManager.includesFeature(feature);
+  }
+  public void removeFeature(  String feature){
+synchronized (features) {
+      features.remove(feature);
+      discoveryManager.removeFeature(feature);
+    }
+    updateEntityCapsVersion();
+  }
+  public void addExtFeature(  String ext){
+synchronized (extCapabilities) {
+      extCapabilities.add(ext);
+    }
+  }
+  public void removeExtFeature(  String ext){
+synchronized (extCapabilities) {
+      extCapabilities.remove(ext);
+    }
+  }
+  public synchronized String getExtFeatures(){
+    StringBuilder bldr=new StringBuilder("");
+    for (    String e : extCapabilities) {
+      bldr.append(e);
+      bldr.append(" ");
+    }
+    return bldr.toString();
+  }
+  public void interceptPacket(  Packet packet){
+    if ((packet instanceof Presence) && (capsManager != null)) {
+      String ver=getEntityCapsVersion();
+      CapsPacketExtension caps=new CapsPacketExtension(getExtFeatures(),capsManager.getNode(),CapsPacketExtension.HASH_METHOD,ver);
+      discoveryManager.setNodeInformationProvider(caps.getNode() + "#" + caps.getVersion(),this);
+      packet.addExtension(caps);
+    }
+  }
+  public List<DiscoverItems.Item> getNodeItems(){
+    return null;
+  }
+  public List<String> getNodeFeatures(){
+    return getFeatures();
+  }
+  public List<DiscoverInfo.Identity> getNodeIdentities(){
+    return identities;
+  }
+  private void initFeatures(){
+    Iterator<String> defaultFeatures=discoveryManager.getFeatures();
+synchronized (features) {
+      while (defaultFeatures.hasNext()) {
+        String feature=defaultFeatures.next();
+        this.features.add(feature);
+      }
+    }
+  }
+  public DiscoverInfo discoverInfo(  String entityID) throws XMPPException {
+    DiscoverInfo discoverInfo=capsManager.getDiscoverInfoByUser(entityID);
+    if (discoverInfo != null)     return discoverInfo;
+    EntityCapsManager.Caps caps=capsManager.getCapsByUser(entityID);
+    if (CACHE_NON_CAPS && (caps == null || !caps.isValid(discoverInfo))) {
+      discoverInfo=nonCapsCache.get(entityID);
+      if (discoverInfo != null)       return discoverInfo;
+    }
+    discoverInfo=discoverInfo(entityID,(caps == null) ? null : caps.getNodeVer());
+    if ((caps != null) && !caps.isValid(discoverInfo)) {
+      if (!caps.hash.equals("")) {
+        logger.error("Invalid DiscoverInfo for " + caps.getNodeVer() + ": "+ discoverInfo);
+      }
+      caps=null;
+    }
+    if (caps == null) {
+      if (CACHE_NON_CAPS)       nonCapsCache.put(entityID,discoverInfo);
+    }
+ else     EntityCapsManager.addDiscoverInfoByCaps(caps,discoverInfo);
+    return discoverInfo;
+  }
+  public DiscoverInfo discoverInfoNonBlocking(  String entityID) throws XMPPException {
+    DiscoverInfo discoverInfo=capsManager.getDiscoverInfoByUser(entityID);
+    if (discoverInfo != null)     return discoverInfo;
+    EntityCapsManager.Caps caps=capsManager.getCapsByUser(entityID);
+    if (CACHE_NON_CAPS && (caps == null || !caps.isValid(discoverInfo))) {
+      discoverInfo=nonCapsCache.get(entityID);
+      if (discoverInfo != null)       return discoverInfo;
+    }
+    retriever.addEntityForRetrieve(entityID,caps);
+    return null;
+  }
+  private DiscoverInfo discoverInfo(  String entityID,  String node) throws XMPPException {
+    return discoveryManager.discoverInfo(entityID,node);
+  }
+  public DiscoverItems discoverItems(  String entityID) throws XMPPException {
+    return discoveryManager.discoverItems(entityID);
+  }
+  public DiscoverItems discoverItems(  String entityID,  String node) throws XMPPException {
+    return discoveryManager.discoverItems(entityID,node);
+  }
+  public boolean supportsFeature(  String jid,  String feature){
+    DiscoverInfo info;
+    try {
+      info=this.discoverInfo(jid);
+    }
+ catch (    XMPPException ex) {
+      logger.info("failed to retrieve disco info for " + jid + " feature "+ feature,ex);
+      return false;
+    }
+    return ((info != null) && info.containsFeature(feature));
+  }
+  public EntityCapsManager getCapsManager(){
+    return capsManager;
+  }
+  public void stop(){
+    if (retriever != null)     retriever.stop();
+  }
+private class DiscoveryInfoRetriever implements Runnable {
+    private boolean stopped=true;
+    private Thread retrieverThread=null;
+    private Map<String,EntityCapsManager.Caps> entities=new HashMap<String,EntityCapsManager.Caps>();
+    private OperationSetContactCapabilitiesJabberImpl capabilitiesOpSet;
+    public void run(){
+      try {
+        stopped=false;
+        while (!stopped) {
+          Map.Entry<String,EntityCapsManager.Caps> entityToProcess=null;
+synchronized (entities) {
+            if (entities.size() == 0) {
+              try {
+                entities.wait();
+              }
+ catch (              InterruptedException iex) {
+              }
+            }
+            Iterator<Map.Entry<String,EntityCapsManager.Caps>> iter=entities.entrySet().iterator();
+            if (iter.hasNext()) {
+              entityToProcess=iter.next();
+              iter.remove();
+            }
+          }
+          if (entityToProcess != null) {
+            requestDiscoveryInfo(entityToProcess.getKey(),entityToProcess.getValue());
+          }
+          entityToProcess=null;
+        }
+      }
+ catch (      Throwable t) {
+        logger.error("Error requesting discovery info, " + "thread ended unexpectedly",t);
+      }
+    }
+    private void requestDiscoveryInfo(    final String entityID,    EntityCapsManager.Caps caps){
+      try {
+        DiscoverInfo discoverInfo=discoverInfo(entityID,(caps == null) ? null : caps.getNodeVer());
+        if ((caps != null) && !caps.isValid(discoverInfo)) {
+          if (!caps.hash.equals("")) {
+            logger.error("Invalid DiscoverInfo for " + caps.getNodeVer() + ": "+ discoverInfo);
+          }
+          caps=null;
+        }
+        boolean fireEvent;
+        if (caps == null) {
+          if (CACHE_NON_CAPS) {
+            nonCapsCache.put(entityID,discoverInfo);
+            fireEvent=true;
+          }
+        }
+ else {
+          EntityCapsManager.addDiscoverInfoByCaps(caps,discoverInfo);
+          fireEvent=true;
+        }
+        if (fireEvent && capabilitiesOpSet != null) {
+          capabilitiesOpSet.fireContactCapabilitiesChanged(entityID);
+        }
+      }
+ catch (      XMPPException ex) {
+        if (logger.isTraceEnabled())         logger.error("Error requesting discover info for " + entityID,ex);
+      }
+    }
+    public void addEntityForRetrieve(    String entityID,    EntityCapsManager.Caps caps){
+synchronized (entities) {
+        if (!entities.containsKey(entityID)) {
+          entities.put(entityID,caps);
+          entities.notifyAll();
+          if (retrieverThread == null) {
+            start();
+          }
+        }
+      }
+    }
+    private void start(){
+      capabilitiesOpSet=(OperationSetContactCapabilitiesJabberImpl)parentProvider.getOperationSet(OperationSetContactCapabilities.class);
+      retrieverThread=new Thread(this,ScServiceDiscoveryManager.class.getName());
+      retrieverThread.setDaemon(true);
+      retrieverThread.start();
+    }
+    void stop(){
+synchronized (entities) {
+        stopped=true;
+        entities.notifyAll();
+        retrieverThread=null;
+      }
+    }
+  }
+}

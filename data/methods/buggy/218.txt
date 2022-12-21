@@ -1,0 +1,42 @@
+private boolean uploadFileToServer(File f,File original,String summary) throws IOException {
+  if (f.length() / MB > MAX_UPLOAD_SIZE && !uploadToOsmandDownloads) {
+    System.err.println("ERROR : file " + f.getName() + " exceeded 200 mb!!! Could not be uploaded.");
+    return false;
+  }
+  double originalLength=original.length() / MB;
+  if (!uploadToOsmandDownloads) {
+    try {
+      DownloaderIndexFromGoogleCode.deleteFileFromGoogleDownloads(f.getName(),token,pagegen,cookieHSID,cookieSID);
+      try {
+        Thread.sleep(4000);
+      }
+ catch (      InterruptedException e) {
+      }
+    }
+ catch (    IOException e) {
+      log.warn("Deleting file from downloads" + f.getName() + " "+ e.getMessage());
+    }
+  }
+  MessageFormat dateFormat=new MessageFormat("{0,date,dd.MM.yyyy}",Locale.US);
+  MessageFormat numberFormat=new MessageFormat("{0,number,##.#}",Locale.US);
+  String size=numberFormat.format(new Object[]{originalLength});
+  String date=dateFormat.format(new Object[]{new Date(original.lastModified())});
+  if (uploadToOsmandDownloads) {
+    uploadToDownloadOsmandNet(f,summary,size,date);
+  }
+ else {
+    String descriptionFile="{" + date + " : "+ size+ " MB}";
+    summary+=" " + descriptionFile;
+    GoogleCodeUploadIndex uploader=new GoogleCodeUploadIndex();
+    uploader.setFileName(f.getAbsolutePath());
+    uploader.setTargetFileName(f.getName());
+    uploader.setProjectName("osmand");
+    uploader.setUserName(user);
+    uploader.setPassword(password);
+    uploader.setLabels("Type-Archive, Testdata");
+    uploader.setSummary(summary);
+    uploader.setDescription(summary);
+    uploader.upload();
+  }
+  return true;
+}

@@ -1,0 +1,15 @@
+private byte findHighestRefLevel(byte currentRefLevel) throws IOException {
+  byte maxLevel=(byte)-1;
+  ReferenceIterator it=getRefs();
+  while (it.hasNext()) {
+    Reference ref=it.next();
+    byte level=getRefLevel(ref.getReferenceType());
+    if (maxLevel < level) {
+      maxLevel=level;
+    }
+    if (level >= currentRefLevel) {
+      return level;
+    }
+  }
+  return maxLevel;
+}

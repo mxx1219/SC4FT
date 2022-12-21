@@ -1,0 +1,9 @@
+void checkTriggers(){
+  if (!running) {
+    LOGGER.trace("Skip all triggers - scheduler paused");
+  }
+  ZonedDateTime now=ZonedDateTime.now();
+  for (  ScheduledTask task : scheduledTasks) {
+    task.execute(now,executor);
+  }
+}

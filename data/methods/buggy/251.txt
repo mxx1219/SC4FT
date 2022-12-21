@@ -1,0 +1,55 @@
+public Object invoke(Object proxy,Method method,Object[] args) throws Throwable {
+  if (method.getName().equals("equals")) {
+    return (proxy == args[0]);
+  }
+ else   if (method.getName().equals("hashCode")) {
+    return System.identityHashCode(proxy);
+  }
+ else   if (method.getName().equals("toString")) {
+    StringBuilder sb=new StringBuilder("Transaction-aware proxy for target Connection ");
+    if (this.target != null) {
+      sb.append("[").append(this.target.toString()).append("]");
+    }
+ else {
+      sb.append(" from DataSource [").append(this.targetDataSource).append("]");
+    }
+  }
+ else   if (method.getName().equals("isClosed")) {
+    return this.closed;
+  }
+ else   if (method.getName().equals("close")) {
+    DataSourceUtils.doReleaseConnection(this.target,this.targetDataSource);
+    this.closed=true;
+    return null;
+  }
+  if (this.target == null) {
+    if (this.closed) {
+      throw new SQLException("Connection handle already closed");
+    }
+    if (shouldObtainFixedConnection(this.targetDataSource)) {
+      this.target=DataSourceUtils.doGetConnection(this.targetDataSource);
+    }
+  }
+  Connection actualTarget=this.target;
+  if (actualTarget == null) {
+    actualTarget=DataSourceUtils.doGetConnection(this.targetDataSource);
+  }
+  if (method.getName().equals("getTargetConnection")) {
+    return actualTarget;
+  }
+  try {
+    Object retVal=method.invoke(actualTarget,args);
+    if (retVal instanceof Statement) {
+      DataSourceUtils.applyTransactionTimeout((Statement)retVal,this.targetDataSource);
+    }
+    return retVal;
+  }
+ catch (  InvocationTargetException ex) {
+    throw ex.getTargetException();
+  }
+ finally {
+    if (actualTarget != this.target) {
+      DataSourceUtils.doReleaseConnection(actualTarget,this.targetDataSource);
+    }
+  }
+}

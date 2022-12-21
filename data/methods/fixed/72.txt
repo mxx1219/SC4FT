@@ -1,0 +1,68 @@
+@Override protected FieldStatsResponse newResponse(FieldStatsRequest request,AtomicReferenceArray shardsResponses,ClusterState clusterState){
+  int successfulShards=0;
+  int failedShards=0;
+  Map<String,Map<String,FieldStats>> indicesMergedFieldStats=new HashMap<>();
+  List<ShardOperationFailedException> shardFailures=new ArrayList<>();
+  for (int i=0; i < shardsResponses.length(); i++) {
+    Object shardValue=shardsResponses.get(i);
+    if (shardValue == null) {
+    }
+ else     if (shardValue instanceof BroadcastShardOperationFailedException) {
+      failedShards++;
+      shardFailures.add(new DefaultShardOperationFailedException((BroadcastShardOperationFailedException)shardValue));
+    }
+ else {
+      successfulShards++;
+      FieldStatsShardResponse shardResponse=(FieldStatsShardResponse)shardValue;
+      final String indexName;
+      if ("cluster".equals(request.level())) {
+        indexName="_all";
+      }
+ else       if ("indices".equals(request.level())) {
+        indexName=shardResponse.getIndex();
+      }
+ else {
+        throw new IllegalArgumentException("Illegal level option [" + request.level() + "]");
+      }
+      Map<String,FieldStats> indexMergedFieldStats=indicesMergedFieldStats.get(indexName);
+      if (indexMergedFieldStats == null) {
+        indicesMergedFieldStats.put(indexName,indexMergedFieldStats=new HashMap<>());
+      }
+      Map<String,FieldStats> fieldStats=shardResponse.getFieldStats();
+      for (      Map.Entry<String,FieldStats> entry : fieldStats.entrySet()) {
+        FieldStats existing=indexMergedFieldStats.get(entry.getKey());
+        if (existing != null) {
+          if (existing.getType() != entry.getValue().getType()) {
+            throw new IllegalStateException("trying to merge the field stats of field [" + entry.getKey() + "] from index ["+ shardResponse.getIndex()+ "] but the field type is incompatible, try to set the 'level' option to 'indices'");
+          }
+          existing.append(entry.getValue());
+        }
+ else {
+          indexMergedFieldStats.put(entry.getKey(),entry.getValue());
+        }
+      }
+    }
+  }
+  if (request.getIndexConstraints().length != 0) {
+    Set<String> fieldStatFields=new HashSet<>(Arrays.asList(request.getFields()));
+    for (    IndexConstraint indexConstraint : request.getIndexConstraints()) {
+      Iterator<Map.Entry<String,Map<String,FieldStats>>> iterator=indicesMergedFieldStats.entrySet().iterator();
+      while (iterator.hasNext()) {
+        Map.Entry<String,Map<String,FieldStats>> entry=iterator.next();
+        FieldStats indexConstraintFieldStats=entry.getValue().get(indexConstraint.getField());
+        if (indexConstraintFieldStats == null) {
+          continue;
+        }
+        if (indexConstraintFieldStats.match(indexConstraint)) {
+          if (fieldStatFields.contains(indexConstraint.getField()) == false) {
+            entry.getValue().remove(indexConstraint.getField());
+          }
+        }
+ else {
+          iterator.remove();
+        }
+      }
+    }
+  }
+  return new FieldStatsResponse(shardsResponses.length(),successfulShards,failedShards,shardFailures,indicesMergedFieldStats);
+}

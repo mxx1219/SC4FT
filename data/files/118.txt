@@ -1,0 +1,74 @@
+package org.ballerinalang.plugins.idea.debugger;
+import com.intellij.openapi.diagnostic.Logger;
+import org.ballerinalang.plugins.idea.debugger.client.WebSocketClient;
+import org.ballerinalang.plugins.idea.debugger.protocol.Command;
+import org.jetbrains.annotations.NotNull;
+import java.net.URISyntaxException;
+import javax.net.ssl.SSLException;
+public class BallerinaWebSocketConnector {
+  private static final Logger LOGGER=Logger.getInstance(BallerinaWebSocketConnector.class);
+  private static final String DEBUG_PROTOCOL="ws://";
+  private static final String DEBUG_WEB_SOCKET_PATH="/debug";
+  private WebSocketClient client;
+  private String myAddress;
+  private ConnectionState myConnectionState;
+  public BallerinaWebSocketConnector(  @NotNull String address){
+    myAddress=address;
+    myConnectionState=ConnectionState.NOT_CONNECTED;
+  }
+  void createConnection(  Callback callback){
+    client=new WebSocketClient(getUri());
+    try {
+      client.handshake(callback);
+    }
+ catch (    InterruptedException|URISyntaxException|SSLException e) {
+      myConnectionState=ConnectionState.CONNECTING;
+      LOGGER.debug(e);
+    }
+  }
+  @NotNull private String getUri(){
+    return DEBUG_PROTOCOL + myAddress + DEBUG_WEB_SOCKET_PATH;
+  }
+  void sendCommand(  Command command){
+    if (isConnected()) {
+      client.sendText(generateRequest(command));
+    }
+  }
+  private String generateRequest(  Command command){
+    return "{\"command\":\"" + command + "\"}";
+  }
+  void send(  String json){
+    if (isConnected()) {
+      client.sendText(json);
+    }
+  }
+  boolean isConnected(){
+    return client != null && client.isConnected();
+  }
+  void close(){
+    try {
+      client.shutDown();
+    }
+ catch (    InterruptedException e) {
+      LOGGER.debug(e);
+    }
+  }
+  String getState(){
+    if (myConnectionState == ConnectionState.NOT_CONNECTED) {
+      return "Not connected. Waiting for a connection.";
+    }
+ else     if (myConnectionState == ConnectionState.CONNECTED) {
+      return "Connected to " + getUri() + ".";
+    }
+ else     if (myConnectionState == ConnectionState.DISCONNECTED) {
+      return "Disconnected.";
+    }
+ else     if (myConnectionState == ConnectionState.CONNECTING) {
+      return "Connecting to " + getUri() + ".";
+    }
+    return "Unknown";
+  }
+  private enum ConnectionState;
+{
+  }
+}

@@ -1,0 +1,258 @@
+package org.apache.beam.runners.dataflow.worker.util.common.worker;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import org.apache.beam.vendor.guava.v20_0.com.google.common.annotations.VisibleForTesting;
+public class GroupingTables {
+  public static <K,V>GroupingTable<K,V,List<V>> buffering(  GroupingKeyCreator<? super K> groupingKeyCreator,  PairInfo pairInfo,  SizeEstimator<? super K> keySizer,  SizeEstimator<? super V> valueSizer){
+    return new BufferingGroupingTable<>(DEFAULT_MAX_GROUPING_TABLE_BYTES,groupingKeyCreator,pairInfo,keySizer,valueSizer);
+  }
+  public static <K,V>GroupingTable<K,V,List<V>> buffering(  Long maxTableSizeBytes,  GroupingKeyCreator<? super K> groupingKeyCreator,  PairInfo pairInfo,  SizeEstimator<? super K> keySizer,  SizeEstimator<? super V> valueSizer){
+    return new BufferingGroupingTable<>(maxTableSizeBytes,groupingKeyCreator,pairInfo,keySizer,valueSizer);
+  }
+  public static <K,V>GroupingTable<K,V,List<V>> bufferingAndSampling(  GroupingKeyCreator<? super K> groupingKeyCreator,  PairInfo pairInfo,  SizeEstimator<? super K> keySizer,  SizeEstimator<? super V> valueSizer,  double sizeEstimatorSampleRate){
+    return new BufferingGroupingTable<>(DEFAULT_MAX_GROUPING_TABLE_BYTES,groupingKeyCreator,pairInfo,new SamplingSizeEstimator<>(keySizer,sizeEstimatorSampleRate,1.0),new SamplingSizeEstimator<>(valueSizer,sizeEstimatorSampleRate,1.0));
+  }
+  public static <K,InputT,AccumT>GroupingTable<K,InputT,AccumT> combining(  GroupingKeyCreator<? super K> groupingKeyCreator,  PairInfo pairInfo,  Combiner<? super K,InputT,AccumT,?> combineFn,  SizeEstimator<? super K> keySizer,  SizeEstimator<? super AccumT> accumulatorSizer){
+    return new CombiningGroupingTable<>(DEFAULT_MAX_GROUPING_TABLE_BYTES,groupingKeyCreator,pairInfo,combineFn,keySizer,accumulatorSizer);
+  }
+  public static <K,InputT,AccumT>GroupingTable<K,InputT,AccumT> combiningAndSampling(  GroupingKeyCreator<? super K> groupingKeyCreator,  PairInfo pairInfo,  Combiner<? super K,InputT,AccumT,?> combineFn,  SizeEstimator<? super K> keySizer,  SizeEstimator<? super AccumT> accumulatorSizer,  double sizeEstimatorSampleRate){
+    return new CombiningGroupingTable<>(DEFAULT_MAX_GROUPING_TABLE_BYTES,groupingKeyCreator,pairInfo,combineFn,new SamplingSizeEstimator<>(keySizer,sizeEstimatorSampleRate,1.0),new SamplingSizeEstimator<>(accumulatorSizer,sizeEstimatorSampleRate,1.0));
+  }
+public static interface GroupingKeyCreator<K> {
+    public Object createGroupingKey(    K key) throws Exception ;
+  }
+public static interface SizeEstimator<T> {
+    public long estimateSize(    T element) throws Exception ;
+  }
+public interface PairInfo {
+    public Object getKeyFromInputPair(    Object pair);
+    public Object getValueFromInputPair(    Object pair);
+    public Object makeOutputPair(    Object key,    Object value);
+  }
+public interface Combiner<K,InputT,AccumT,OutputT> {
+    public AccumT createAccumulator(    K key);
+    public AccumT add(    K key,    AccumT accumulator,    InputT value);
+    public AccumT merge(    K key,    Iterable<AccumT> accumulators);
+    public AccumT compact(    K key,    AccumT accumulator);
+    public OutputT extract(    K key,    AccumT accumulator);
+  }
+  static final long DEFAULT_MAX_GROUPING_TABLE_BYTES;
+  static final int BYTES_PER_JVM_WORD=getBytesPerJvmWord();
+  static final int PER_KEY_OVERHEAD=24 * BYTES_PER_JVM_WORD;
+@VisibleForTesting public abstract static class GroupingTableBase<K,InputT,AccumT> implements GroupingTable<K,InputT,AccumT> {
+    private static final double TARGET_LOAD=0.9;
+    private long maxSize;
+    private final GroupingKeyCreator<? super K> groupingKeyCreator;
+    private final PairInfo pairInfo;
+    private long size=0;
+    private Map<Object,GroupingTableEntry<K,InputT,AccumT>> table;
+    private GroupingTableBase(    long maxSize,    GroupingKeyCreator<? super K> groupingKeyCreator,    PairInfo pairInfo){
+      this.maxSize=maxSize;
+      this.groupingKeyCreator=groupingKeyCreator;
+      this.pairInfo=pairInfo;
+      this.table=new HashMap<>();
+    }
+interface GroupingTableEntry<K,InputT,AccumT> {
+      public K getKey();
+      public AccumT getValue();
+      public void add(      InputT value) throws Exception ;
+      public long getSize();
+      public void compact() throws Exception ;
+    }
+    public abstract GroupingTableEntry<K,InputT,AccumT> createTableEntry(    K key) throws Exception ;
+    @SuppressWarnings("unchecked") @Override public void put(    Object pair,    Receiver receiver) throws Exception {
+      put((K)pairInfo.getKeyFromInputPair(pair),(InputT)pairInfo.getValueFromInputPair(pair),receiver);
+    }
+    public void put(    K key,    InputT value,    Receiver receiver) throws Exception {
+      Object groupingKey=groupingKeyCreator.createGroupingKey(key);
+      GroupingTableEntry<K,InputT,AccumT> entry=table.get(groupingKey);
+      if (entry == null) {
+        entry=createTableEntry(key);
+        table.put(groupingKey,entry);
+        size+=PER_KEY_OVERHEAD;
+      }
+ else {
+        size-=entry.getSize();
+      }
+      entry.add(value);
+      size+=entry.getSize();
+      if (size >= maxSize) {
+        long targetSize=(long)(TARGET_LOAD * maxSize);
+        Iterator<GroupingTableEntry<K,InputT,AccumT>> entries=table.values().iterator();
+        while (size >= targetSize) {
+          if (!entries.hasNext()) {
+            size=0;
+            break;
+          }
+          GroupingTableEntry<K,InputT,AccumT> toFlush=entries.next();
+          entries.remove();
+          size-=toFlush.getSize() + PER_KEY_OVERHEAD;
+          output(toFlush,receiver);
+        }
+      }
+    }
+    private void output(    GroupingTableEntry<K,InputT,AccumT> entry,    Receiver receiver) throws Exception {
+      entry.compact();
+      receiver.process(pairInfo.makeOutputPair(entry.getKey(),entry.getValue()));
+    }
+    @Override public void flush(    Receiver output) throws Exception {
+      for (      GroupingTableEntry<K,InputT,AccumT> entry : table.values()) {
+        output(entry,output);
+      }
+      table.clear();
+      size=0;
+    }
+    @VisibleForTesting public void setMaxSize(    long maxSize){
+      this.maxSize=maxSize;
+    }
+    @VisibleForTesting public long size(){
+      return size;
+    }
+  }
+private static class BufferingGroupingTable<K,V> extends GroupingTableBase<K,V,List<V>> {
+    public final SizeEstimator<? super K> keySizer;
+    public final SizeEstimator<? super V> valueSizer;
+    private BufferingGroupingTable(    long maxSize,    GroupingKeyCreator<? super K> groupingKeyCreator,    PairInfo pairInfo,    SizeEstimator<? super K> keySizer,    SizeEstimator<? super V> valueSizer){
+      super(maxSize,groupingKeyCreator,pairInfo);
+      this.keySizer=keySizer;
+      this.valueSizer=valueSizer;
+    }
+    @Override public GroupingTableEntry<K,V,List<V>> createTableEntry(    final K key) throws Exception {
+      return new GroupingTableEntry<K,V,List<V>>(){
+        long size=keySizer.estimateSize(key);
+        final List<V> values=new ArrayList<>();
+        @Override public K getKey(){
+          return key;
+        }
+        @Override public List<V> getValue(){
+          return values;
+        }
+        @Override public long getSize(){
+          return size;
+        }
+        @Override public void compact(){
+        }
+        @Override public void add(        V value) throws Exception {
+          values.add(value);
+          size+=BYTES_PER_JVM_WORD + valueSizer.estimateSize(value);
+        }
+      }
+;
+    }
+  }
+private static class CombiningGroupingTable<K,InputT,AccumT> extends GroupingTableBase<K,InputT,AccumT> {
+    private final Combiner<? super K,InputT,AccumT,?> combiner;
+    private final SizeEstimator<? super K> keySizer;
+    private final SizeEstimator<? super AccumT> accumulatorSizer;
+    private CombiningGroupingTable(    long maxSize,    GroupingKeyCreator<? super K> groupingKeyCreator,    PairInfo pairInfo,    Combiner<? super K,InputT,AccumT,?> combineFn,    SizeEstimator<? super K> keySizer,    SizeEstimator<? super AccumT> accumulatorSizer){
+      super(maxSize,groupingKeyCreator,pairInfo);
+      this.combiner=combineFn;
+      this.keySizer=keySizer;
+      this.accumulatorSizer=accumulatorSizer;
+    }
+    @Override public GroupingTableEntry<K,InputT,AccumT> createTableEntry(    final K key) throws Exception {
+      return new GroupingTableEntry<K,InputT,AccumT>(){
+        final long keySize=keySizer.estimateSize(key);
+        AccumT accumulator=combiner.createAccumulator(key);
+        long accumulatorSize=0;
+        @Override public K getKey(){
+          return key;
+        }
+        @Override public AccumT getValue(){
+          return accumulator;
+        }
+        @Override public long getSize(){
+          return keySize + accumulatorSize;
+        }
+        @Override public void compact() throws Exception {
+          AccumT newAccumulator=combiner.compact(key,accumulator);
+          if (newAccumulator != accumulator) {
+            accumulator=newAccumulator;
+            accumulatorSize=accumulatorSizer.estimateSize(newAccumulator);
+          }
+        }
+        @Override public void add(        InputT value) throws Exception {
+          accumulator=combiner.add(key,accumulator,value);
+          accumulatorSize=accumulatorSizer.estimateSize(accumulator);
+        }
+      }
+;
+    }
+  }
+  private static int getBytesPerJvmWord(){
+    String wordSizeInBits=System.getProperty("sun.arch.data.model");
+    try {
+      return Integer.parseInt(wordSizeInBits) / 8;
+    }
+ catch (    NumberFormatException e) {
+      return 8;
+    }
+  }
+@VisibleForTesting static class SamplingSizeEstimator<T> implements SizeEstimator<T> {
+    public static final double CONFIDENCE_INTERVAL_SIGMA=3;
+    public static final double CONFIDENCE_INTERVAL_SIZE=0.25;
+    public static final long DEFAULT_MIN_SAMPLED=20;
+    private final SizeEstimator<T> underlying;
+    private final double minSampleRate;
+    private final double maxSampleRate;
+    private final long minSampled;
+    private final Random random;
+    private long totalElements=0;
+    private long sampledElements=0;
+    private long sampledSum=0;
+    private double sampledSumSquares=0;
+    private long estimate;
+    private long nextSample=0;
+    private SamplingSizeEstimator(    SizeEstimator<T> underlying,    double minSampleRate,    double maxSampleRate){
+      this(underlying,minSampleRate,maxSampleRate,DEFAULT_MIN_SAMPLED,new Random());
+    }
+    @VisibleForTesting SamplingSizeEstimator(    SizeEstimator<T> underlying,    double minSampleRate,    double maxSampleRate,    long minSampled,    Random random){
+      this.underlying=underlying;
+      this.minSampleRate=minSampleRate;
+      this.maxSampleRate=maxSampleRate;
+      this.minSampled=minSampled;
+      this.random=random;
+    }
+    @Override public long estimateSize(    T element) throws Exception {
+      if (sampleNow()) {
+        return recordSample(underlying.estimateSize(element));
+      }
+ else {
+        return estimate;
+      }
+    }
+    private boolean sampleNow(){
+      totalElements++;
+      return --nextSample < 0;
+    }
+    private long recordSample(    long value){
+      sampledElements+=1;
+      sampledSum+=value;
+      sampledSumSquares+=value * value;
+      estimate=(long)Math.ceil(sampledSum / sampledElements);
+      long target=desiredSampleSize();
+      if (sampledElements < minSampled || sampledElements < target) {
+        nextSample=0;
+      }
+ else {
+        double rate=cap(minSampleRate,maxSampleRate,Math.max(1.0 / (totalElements - minSampled + 1),target / (double)totalElements));
+        nextSample=rate == 1.0 ? 0 : (long)Math.floor(Math.log(random.nextDouble()) / Math.log(1 - rate));
+      }
+      return value;
+    }
+    private static final double cap(    double min,    double max,    double value){
+      return Math.min(max,Math.max(min,value));
+    }
+    private long desiredSampleSize(){
+      double mean=sampledSum / (double)sampledElements;
+      double sumSquareDiff=(sampledSumSquares - (2 * mean * sampledSum) + (sampledElements * mean * mean));
+      double stddev=Math.sqrt(sumSquareDiff / (sampledElements - 1));
+      double sqrtDesiredSamples=(CONFIDENCE_INTERVAL_SIGMA * stddev) / (CONFIDENCE_INTERVAL_SIZE * mean);
+      return (long)Math.ceil(sqrtDesiredSamples * sqrtDesiredSamples);
+    }
+  }
+}

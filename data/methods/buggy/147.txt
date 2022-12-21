@@ -1,0 +1,8 @@
+@Override public void onProcessingTime(long timestamp) throws Exception {
+  try {
+    output.emitLatencyMarker(new LatencyMarker(timestamp,operatorId,subtaskIndex));
+  }
+ catch (  Throwable t) {
+    LOG.warn("Error while emitting latency marker.",t);
+  }
+}

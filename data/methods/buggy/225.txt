@@ -1,0 +1,16 @@
+protected StartTransformResponse startTransformWithRetryOnConflict(String id,RequestOptions options) throws Exception {
+  ElasticsearchStatusException lastConflict=null;
+  for (int retries=10; retries > 0; --retries) {
+    try (RestHighLevelClient restClient=new TestRestHighLevelClient()){
+      return restClient.transform().startTransform(new StartTransformRequest(id),options);
+    }
+ catch (    ElasticsearchStatusException e) {
+      if (RestStatus.CONFLICT.equals(e.status()) == false) {
+        throw e;
+      }
+      lastConflict=e;
+      Thread.sleep(5);
+    }
+  }
+  throw lastConflict;
+}

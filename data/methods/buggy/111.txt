@@ -1,0 +1,9 @@
+public void onCurrencySelected(TradeCurrency tradeCurrency){
+  if (tradeCurrency != null) {
+    this.tradeCurrency=tradeCurrency;
+    String code=tradeCurrency.getCode();
+    tradeCurrencyCode.set(code);
+    paymentAccount.setSelectedTradeCurrency(tradeCurrency);
+    priceFeed.setCurrencyCode(code);
+  }
+}

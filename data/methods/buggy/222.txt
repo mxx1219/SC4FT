@@ -1,0 +1,7 @@
+TestFileSystemRMStore(Configuration conf) throws Exception {
+  init(conf);
+  Assert.assertNull(fs);
+  assertTrue(workingDirPathURI.equals(fsWorkingPath));
+  start();
+  Assert.assertNotNull(fs);
+}

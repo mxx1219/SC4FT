@@ -1,0 +1,15 @@
+private long recordSample(long value){
+  sampledElements+=1;
+  sampledSum+=value;
+  sampledSumSquares+=value * value;
+  estimate=(long)Math.ceil(sampledSum / (double)sampledElements);
+  long target=desiredSampleSize();
+  if (sampledElements < minSampled || sampledElements < target) {
+    nextSample=0;
+  }
+ else {
+    double rate=cap(minSampleRate,maxSampleRate,Math.max(1.0 / (totalElements - minSampled + 1),target / (double)totalElements));
+    nextSample=rate == 1.0 ? 0 : (long)Math.floor(Math.log(random.nextDouble()) / Math.log(1 - rate));
+  }
+  return value;
+}

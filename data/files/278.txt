@@ -1,0 +1,35 @@
+package org.optaplanner.core.config.heuristic.selector.move.factory;
+import com.thoughtworks.xstream.annotations.XStreamAlias;
+import org.optaplanner.core.config.heuristic.policy.HeuristicConfigPolicy;
+import org.optaplanner.core.config.heuristic.selector.common.SelectionCacheType;
+import org.optaplanner.core.config.heuristic.selector.move.MoveSelectorConfig;
+import org.optaplanner.core.config.util.ConfigUtils;
+import org.optaplanner.core.impl.heuristic.selector.move.MoveSelector;
+import org.optaplanner.core.impl.heuristic.selector.move.factory.MoveListFactory;
+import org.optaplanner.core.impl.heuristic.selector.move.factory.MoveListFactoryToMoveSelectorBridge;
+@XStreamAlias("moveListFactory") public class MoveListFactoryConfig extends MoveSelectorConfig {
+  protected Class<? extends MoveListFactory> moveListFactoryClass=null;
+  public Class<? extends MoveListFactory> getMoveListFactoryClass(){
+    return moveListFactoryClass;
+  }
+  public void setMoveListFactoryClass(  Class<? extends MoveListFactory> moveListFactoryClass){
+    this.moveListFactoryClass=moveListFactoryClass;
+  }
+  @Override protected boolean isBaseInherentlyCached(){
+    return true;
+  }
+  public MoveSelector buildBaseMoveSelector(  HeuristicConfigPolicy configPolicy,  SelectionCacheType minimumCacheType,  boolean randomSelection){
+    MoveListFactory moveListFactory=ConfigUtils.newInstance(this,"moveListFactoryClass",moveListFactoryClass);
+    if (minimumCacheType.compareTo(SelectionCacheType.STEP) < 0) {
+      minimumCacheType=SelectionCacheType.STEP;
+    }
+    return new MoveListFactoryToMoveSelectorBridge(moveListFactory,minimumCacheType,randomSelection);
+  }
+  public void inherit(  MoveListFactoryConfig inheritedConfig){
+    super.inherit(inheritedConfig);
+    moveListFactoryClass=ConfigUtils.inheritOverwritableProperty(moveListFactoryClass,inheritedConfig.getMoveListFactoryClass());
+  }
+  @Override public String toString(){
+    return getClass().getSimpleName() + "(" + moveListFactoryClass+ ")";
+  }
+}

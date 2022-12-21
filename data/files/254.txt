@@ -1,0 +1,266 @@
+package com.oracle.graal.pointsto.meta;
+import jdk.vm.ci.common.JVMCIError.shouldNotReachHere;
+import jdk.vm.ci.common.JVMCIError.unimplemented;
+import java.lang.annotation.Annotation;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.lang.reflect.Type;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import org.graalvm.compiler.debug.DebugContext;
+import org.graalvm.compiler.debug.GraalError;
+import org.graalvm.compiler.java.BytecodeParser.BytecodeParserError;
+import org.graalvm.compiler.nodes.StructuredGraph;
+import org.graalvm.compiler.nodes.graphbuilderconf.InvocationPlugin;
+import org.graalvm.util.GuardedAnnotationAccess;
+import com.oracle.graal.pointsto.api.PointstoOptions;
+import com.oracle.graal.pointsto.constraints.UnsupportedFeatureException;
+import com.oracle.graal.pointsto.flow.InvokeTypeFlow;
+import com.oracle.graal.pointsto.flow.MethodTypeFlow;
+import com.oracle.graal.pointsto.infrastructure.GraphProvider;
+import com.oracle.graal.pointsto.infrastructure.WrappedJavaMethod;
+import com.oracle.graal.pointsto.infrastructure.WrappedSignature;
+import com.oracle.graal.pointsto.results.StaticAnalysisResults;
+import jdk.vm.ci.meta.Constant;
+import jdk.vm.ci.meta.ConstantPool;
+import jdk.vm.ci.meta.ExceptionHandler;
+import jdk.vm.ci.meta.JavaType;
+import jdk.vm.ci.meta.LineNumberTable;
+import jdk.vm.ci.meta.Local;
+import jdk.vm.ci.meta.LocalVariableTable;
+import jdk.vm.ci.meta.ProfilingInfo;
+import jdk.vm.ci.meta.ResolvedJavaMethod;
+import jdk.vm.ci.meta.ResolvedJavaType;
+import jdk.vm.ci.meta.SpeculationLog;
+public class AnalysisMethod implements WrappedJavaMethod, GraphProvider {
+  private final AnalysisUniverse universe;
+  public final ResolvedJavaMethod wrapped;
+  private final int id;
+  private final ExceptionHandler[] exceptionHandlers;
+  private final LocalVariableTable localVariableTable;
+  private MethodTypeFlow typeFlow;
+  private boolean isRootMethod;
+  private boolean isIntrinsicMethod;
+  private Object entryPointData;
+  private boolean isInvoked;
+  private boolean isImplementationInvoked;
+  protected AnalysisMethod[] implementations;
+  private ConcurrentMap<InvokeTypeFlow,Object> invokedBy;
+  private ConcurrentMap<InvokeTypeFlow,Object> implementationInvokedBy;
+  public AnalysisMethod(  AnalysisUniverse universe,  ResolvedJavaMethod wrapped){
+  }
+  private JavaType getCatchType(  ExceptionHandler handler){
+    JavaType catchType=handler.getCatchType();
+    if (catchType == null) {
+      return null;
+    }
+    ResolvedJavaType resolvedCatchType;
+    try {
+      resolvedCatchType=catchType.resolve(wrapped.getDeclaringClass());
+    }
+ catch (    NoClassDefFoundError e) {
+      return catchType;
+    }
+    return universe.lookup(resolvedCatchType);
+  }
+  public void cleanupAfterAnalysis(){
+    typeFlow=null;
+    invokedBy=null;
+    implementationInvokedBy=null;
+  }
+  public void startTrackInvocations(){
+    if (invokedBy == null) {
+      invokedBy=new ConcurrentHashMap<>();
+    }
+    if (implementationInvokedBy == null) {
+      implementationInvokedBy=new ConcurrentHashMap<>();
+    }
+  }
+  public int getId(){
+    return id;
+  }
+  public MethodTypeFlow getTypeFlow(){
+    return typeFlow;
+  }
+  public void registerAsIntrinsicMethod(){
+    isIntrinsicMethod=true;
+  }
+  public void registerAsEntryPoint(  Object newEntryPointData){
+  }
+  public void registerAsInvoked(  InvokeTypeFlow invoke){
+    isInvoked=true;
+    if (invokedBy != null && invoke != null) {
+      invokedBy.put(invoke,Boolean.TRUE);
+    }
+  }
+  public void registerAsImplementationInvoked(  InvokeTypeFlow invoke){
+  }
+  public List<AnalysisMethod> getJavaInvocations(){
+    List<AnalysisMethod> result=new ArrayList<>();
+    for (    InvokeTypeFlow invoke : implementationInvokedBy.keySet()) {
+      result.add((AnalysisMethod)invoke.getSource().graph().method());
+    }
+    return result;
+  }
+  public Set<InvokeTypeFlow> getInvokeTypeFlows(){
+    return implementationInvokedBy.keySet();
+  }
+  public boolean isEntryPoint(){
+    return entryPointData != null;
+  }
+  public Object getEntryPointData(){
+    return entryPointData;
+  }
+  public boolean isIntrinsicMethod(){
+    return isIntrinsicMethod;
+  }
+  public void registerAsRootMethod(){
+    isRootMethod=true;
+    getDeclaringClass().registerAsInTypeCheck();
+  }
+  public boolean isRootMethod(){
+    return isRootMethod;
+  }
+  public boolean isSimplyInvoked(){
+    return isInvoked;
+  }
+  public boolean isSimplyImplementationInvoked(){
+    return isImplementationInvoked;
+  }
+  public boolean isInvoked(){
+    return isIntrinsicMethod || isEntryPoint() || isInvoked;
+  }
+  public boolean isImplementationInvoked(){
+    return !Modifier.isAbstract(getModifiers()) && (isIntrinsicMethod || isEntryPoint() || isImplementationInvoked);
+  }
+  @Override public ResolvedJavaMethod getWrapped(){
+    return wrapped;
+  }
+  @Override public String getName(){
+    return wrapped.getName();
+  }
+  @Override public WrappedSignature getSignature(){
+    return universe.lookup(wrapped.getSignature(),getDeclaringClass());
+  }
+  @Override public StructuredGraph buildGraph(  DebugContext debug,  ResolvedJavaMethod method,  HostedProviders providers,  Purpose purpose){
+    if (wrapped instanceof GraphProvider) {
+      return ((GraphProvider)wrapped).buildGraph(debug,method,providers,purpose);
+    }
+    return null;
+  }
+  @Override public boolean allowRuntimeCompilation(){
+    if (wrapped instanceof GraphProvider) {
+      return ((GraphProvider)wrapped).allowRuntimeCompilation();
+    }
+    return true;
+  }
+  @Override public byte[] getCode(){
+    return wrapped.getCode();
+  }
+  @Override public int getCodeSize(){
+    return wrapped.getCodeSize();
+  }
+  @Override public AnalysisType getDeclaringClass(){
+    return universe.lookup(wrapped.getDeclaringClass());
+  }
+  @Override public int getMaxLocals(){
+    return wrapped.getMaxLocals();
+  }
+  @Override public int getMaxStackSize(){
+    return wrapped.getMaxStackSize();
+  }
+  @Override public Parameter[] getParameters(){
+    return wrapped.getParameters();
+  }
+  @Override public int getModifiers(){
+    return wrapped.getModifiers();
+  }
+  @Override public boolean isSynthetic(){
+    return wrapped.isSynthetic();
+  }
+  @Override public boolean isVarArgs(){
+    throw unimplemented();
+  }
+  @Override public boolean isBridge(){
+    return wrapped.isBridge();
+  }
+  @Override public boolean isClassInitializer(){
+    return wrapped.isClassInitializer();
+  }
+  @Override public boolean isConstructor(){
+    return wrapped.isConstructor();
+  }
+  @Override public boolean canBeStaticallyBound(){
+  }
+  public AnalysisMethod[] getImplementations(){
+  }
+  @Override public ExceptionHandler[] getExceptionHandlers(){
+    return exceptionHandlers;
+  }
+  @Override public StackTraceElement asStackTraceElement(  int bci){
+    return wrapped.asStackTraceElement(bci);
+  }
+  @Override public ProfilingInfo getProfilingInfo(  boolean includeNormal,  boolean includeOSR){
+    return StaticAnalysisResults.NO_RESULTS;
+  }
+  @Override public ConstantPool getConstantPool(){
+    return universe.lookup(wrapped.getConstantPool(),getDeclaringClass());
+  }
+  @Override public Annotation[] getAnnotations(){
+    return GuardedAnnotationAccess.getAnnotations(wrapped);
+  }
+  @Override public Annotation[] getDeclaredAnnotations(){
+    return GuardedAnnotationAccess.getDeclaredAnnotations(wrapped);
+  }
+  @Override public <T extends Annotation>T getAnnotation(  Class<T> annotationClass){
+    return GuardedAnnotationAccess.getAnnotation(wrapped,annotationClass);
+  }
+  @Override public Annotation[][] getParameterAnnotations(){
+    return wrapped.getParameterAnnotations();
+  }
+  @Override public Type[] getGenericParameterTypes(){
+    return wrapped.getGenericParameterTypes();
+  }
+  @Override public boolean canBeInlined(){
+    return true;
+  }
+  @Override public boolean hasNeverInlineDirective(){
+    return wrapped.hasNeverInlineDirective();
+  }
+  @Override public boolean shouldBeInlined(){
+    throw unimplemented();
+  }
+  @Override public LineNumberTable getLineNumberTable(){
+    return wrapped.getLineNumberTable();
+  }
+  @Override public String toString(){
+    return "AnalysisMethod<" + format("%h.%n") + " -> "+ wrapped.toString()+ ">";
+  }
+  @Override public LocalVariableTable getLocalVariableTable(){
+    return localVariableTable;
+  }
+  @Override public void reprofile(){
+    throw unimplemented();
+  }
+  @Override public Constant getEncoding(){
+    throw unimplemented();
+  }
+  @Override public boolean isInVirtualMethodTable(  ResolvedJavaType resolved){
+    return false;
+  }
+  @Override public boolean isDefault(){
+    return wrapped.isDefault();
+  }
+  @Override public SpeculationLog getSpeculationLog(){
+    throw shouldNotReachHere();
+  }
+  @Override public int hashCode(){
+    return id;
+  }
+  @Override public boolean equals(  Object obj){
+    return this == obj;
+  }
+}

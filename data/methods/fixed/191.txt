@@ -1,0 +1,41 @@
+public Collection<Object> createComponents(InternalClient internalClient,ClusterService clusterService,ThreadPool threadPool,ResourceWatcherService resourceWatcherService,ScriptService scriptService,NamedXContentRegistry xContentRegistry){
+  if (this.transportClientMode || this.tribeNodeClient) {
+    return emptyList();
+  }
+  MlLifeCycleService mlLifeCycleService=new MlLifeCycleService(settings,clusterService);
+  if (false == enabled || this.tribeNode) {
+    return Collections.singletonList(mlLifeCycleService);
+  }
+  JobResultsPersister jobResultsPersister=new JobResultsPersister(settings,internalClient);
+  JobProvider jobProvider=new JobProvider(internalClient,settings);
+  JobDataCountsPersister jobDataCountsPersister=new JobDataCountsPersister(settings,internalClient);
+  Auditor auditor=new Auditor(internalClient,clusterService);
+  UpdateJobProcessNotifier notifier=new UpdateJobProcessNotifier(settings,internalClient,clusterService,threadPool);
+  JobManager jobManager=new JobManager(settings,jobProvider,clusterService,auditor,internalClient,notifier);
+  AutodetectProcessFactory autodetectProcessFactory;
+  NormalizerProcessFactory normalizerProcessFactory;
+  if (AUTODETECT_PROCESS.get(settings) && MachineLearningFeatureSet.isRunningOnMlPlatform(true)) {
+    try {
+      NativeController nativeController=NativeControllerHolder.getNativeController(settings);
+      if (nativeController == null) {
+        throw new ElasticsearchException("Failed to create native process controller for Machine Learning");
+      }
+      autodetectProcessFactory=new NativeAutodetectProcessFactory(jobProvider,env,settings,nativeController,internalClient);
+      normalizerProcessFactory=new NativeNormalizerProcessFactory(env,settings,nativeController);
+    }
+ catch (    IOException e) {
+      throw new ElasticsearchException("Failed to create native process factories for Machine Learning",e);
+    }
+  }
+ else {
+    autodetectProcessFactory=null;
+    normalizerProcessFactory=null;
+  }
+  NormalizerFactory normalizerFactory=new NormalizerFactory(normalizerProcessFactory,threadPool.executor(MachineLearning.NORMALIZER_THREAD_POOL_NAME));
+  AutodetectProcessManager autodetectProcessManager=new AutodetectProcessManager(settings,internalClient,threadPool,jobManager,jobProvider,jobResultsPersister,jobDataCountsPersister,autodetectProcessFactory,normalizerFactory,xContentRegistry,auditor);
+  PersistentTasksService persistentTasksService=new PersistentTasksService(settings,clusterService,threadPool,internalClient);
+  DatafeedManager datafeedManager=new DatafeedManager(threadPool,internalClient,clusterService,jobProvider,null,auditor,persistentTasksService);
+  InvalidLicenseEnforcer invalidLicenseEnforcer=new InvalidLicenseEnforcer(settings,licenseState,threadPool,datafeedManager,autodetectProcessManager);
+  PersistentTasksExecutorRegistry persistentTasksExecutorRegistry=new PersistentTasksExecutorRegistry(Settings.EMPTY,Arrays.asList(new OpenJobAction.OpenJobPersistentTasksExecutor(settings,licenseState,clusterService,autodetectProcessManager),new StartDatafeedAction.StartDatafeedPersistentTasksExecutor(settings,licenseState,datafeedManager)));
+  return Arrays.asList(mlLifeCycleService,jobProvider,jobManager,autodetectProcessManager,new MachineLearningTemplateRegistry(settings,clusterService,internalClient,threadPool),new MlInitializationService(settings,threadPool,clusterService,internalClient),jobDataCountsPersister,datafeedManager,persistentTasksService,persistentTasksExecutorRegistry,new PersistentTasksClusterService(Settings.EMPTY,persistentTasksExecutorRegistry,clusterService),auditor,invalidLicenseEnforcer,new MlAssignmentNotifier(settings,auditor,clusterService));
+}

@@ -1,0 +1,47 @@
+public static GrammaticalStructure buildCoNLLXGrammaticalStructure(List<List<String>> tokenFields,Map<String,GrammaticalRelation> shortNameToGRel,GrammaticalStructureFromDependenciesFactory factory){
+  List<TreeGraphNode> tgWordNodes=new ArrayList<TreeGraphNode>(tokenFields.size());
+  List<TreeGraphNode> tgPOSNodes=new ArrayList<TreeGraphNode>(tokenFields.size());
+  SemanticHeadFinder headFinder=new SemanticHeadFinder();
+  for (  List<String> fields : tokenFields) {
+    TreeGraphNode word=new TreeGraphNode(new Word(fields.get(CoNLLX_WordField)));
+    TreeGraphNode pos=new TreeGraphNode(new Word(fields.get(CoNLLX_POSField)));
+    tgWordNodes.add(word);
+    tgPOSNodes.add(pos);
+    TreeGraphNode[] childArr={word};
+    pos.setChildren(childArr);
+    word.setParent(pos);
+    pos.percolateHeads(headFinder);
+  }
+  TreeGraphNode root=new TreeGraphNode(new Word("ROOT-" + (tgWordNodes.size() + 1)));
+  root.setChildren(tgPOSNodes.toArray(new TreeGraphNode[tgPOSNodes.size()]));
+  List<TypedDependency> tdeps=new ArrayList<TypedDependency>(tgWordNodes.size());
+  TreeGraphNode dependencyRoot=new TreeGraphNode(new Word("ROOT"));
+  dependencyRoot.setIndex(0);
+  for (int i=0; i < tgWordNodes.size(); i++) {
+    String parentIdStr=tokenFields.get(i).get(CoNLLX_GovField);
+    if (parentIdStr == null || parentIdStr.equals(""))     continue;
+    int parentId=Integer.parseInt(parentIdStr) - 1;
+    String grelString=tokenFields.get(i).get(CoNLLX_RelnField);
+    if (grelString.equals("null") || grelString.equals("erased"))     continue;
+    GrammaticalRelation grel=shortNameToGRel.get(grelString.toLowerCase());
+    TypedDependency tdep;
+    if (grel == null) {
+      if (grelString.toLowerCase().equals("root")) {
+        tdep=new TypedDependency(ROOT,dependencyRoot,tgWordNodes.get(i));
+      }
+ else {
+        throw new RuntimeException("Unknown grammatical relation '" + grelString + "' fields: "+ tokenFields.get(i)+ "\nNode: "+ tgWordNodes.get(i)+ "\n"+ "Known Grammatical relations: ["+ shortNameToGRel.keySet()+ "]");
+      }
+    }
+ else {
+      if (parentId >= tgWordNodes.size()) {
+        System.err.printf("Warning: Invalid Parent Id %d Sentence Length: %d%n",parentId + 1,tgWordNodes.size());
+        System.err.printf("         Assigning to root (0)%n");
+        parentId=-1;
+      }
+      tdep=new TypedDependency(grel,(parentId == -1 ? root : tgWordNodes.get(parentId)),tgWordNodes.get(i));
+    }
+    tdeps.add(tdep);
+  }
+  return factory.build(tdeps,root);
+}

@@ -1,0 +1,356 @@
+private void restorePermissionState(@NonNull AndroidPackage pkg,boolean replace,@Nullable String packageOfInterest,@Nullable PermissionCallback callback){
+  final PackageSetting ps=(PackageSetting)mPackageManagerInt.getPackageSetting(pkg.getPackageName());
+  if (ps == null) {
+    return;
+  }
+  final PermissionsState permissionsState=ps.getPermissionsState();
+  final int[] currentUserIds=UserManagerService.getInstance().getUserIds();
+  boolean runtimePermissionsRevoked=false;
+  int[] updatedUserIds=EMPTY_INT_ARRAY;
+  for (  int userId : currentUserIds) {
+    if (permissionsState.isMissing(userId)) {
+      Collection<String> requestedPermissions;
+      int targetSdkVersion;
+      if (!ps.isSharedUser()) {
+        requestedPermissions=pkg.getRequestedPermissions();
+        targetSdkVersion=pkg.getTargetSdkVersion();
+      }
+ else {
+        requestedPermissions=new ArraySet<>();
+        targetSdkVersion=Build.VERSION_CODES.CUR_DEVELOPMENT;
+        List<AndroidPackage> packages=ps.getSharedUser().getPackages();
+        int packagesSize=packages.size();
+        for (int i=0; i < packagesSize; i++) {
+          AndroidPackage sharedUserPackage=packages.get(i);
+          requestedPermissions.addAll(sharedUserPackage.getRequestedPermissions());
+          targetSdkVersion=Math.min(targetSdkVersion,sharedUserPackage.getTargetSdkVersion());
+        }
+      }
+      for (      String permissionName : requestedPermissions) {
+        BasePermission permission=mSettings.getPermission(permissionName);
+        if (Objects.equals(permission.getSourcePackageName(),PLATFORM_PACKAGE_NAME) && permission.isRuntime() && !permission.isRemoved()) {
+          if (permission.isHardOrSoftRestricted() || permission.isImmutablyRestricted()) {
+            permissionsState.updatePermissionFlags(permission,userId,PackageManager.FLAG_PERMISSION_RESTRICTION_UPGRADE_EXEMPT,PackageManager.FLAG_PERMISSION_RESTRICTION_UPGRADE_EXEMPT);
+          }
+          if (targetSdkVersion < Build.VERSION_CODES.M) {
+            permissionsState.updatePermissionFlags(permission,userId,PackageManager.FLAG_PERMISSION_REVIEW_REQUIRED | PackageManager.FLAG_PERMISSION_REVOKED_COMPAT,PackageManager.FLAG_PERMISSION_REVIEW_REQUIRED | PackageManager.FLAG_PERMISSION_REVOKED_COMPAT);
+            permissionsState.grantRuntimePermission(permission,userId);
+          }
+        }
+      }
+      permissionsState.setMissing(false,userId);
+      updatedUserIds=ArrayUtils.appendInt(updatedUserIds,userId);
+    }
+  }
+  PermissionsState origPermissions=permissionsState;
+  boolean changedInstallPermission=false;
+  if (replace) {
+    ps.setInstallPermissionsFixed(false);
+    if (!ps.isSharedUser()) {
+      origPermissions=new PermissionsState(permissionsState);
+      permissionsState.reset();
+    }
+ else {
+synchronized (mLock) {
+        updatedUserIds=revokeUnusedSharedUserPermissionsLocked(ps.getSharedUser(),UserManagerService.getInstance().getUserIds());
+        if (!ArrayUtils.isEmpty(updatedUserIds)) {
+          runtimePermissionsRevoked=true;
+        }
+      }
+    }
+  }
+  permissionsState.setGlobalGids(mGlobalGids);
+synchronized (mLock) {
+    ArraySet<String> newImplicitPermissions=new ArraySet<>();
+    final int N=pkg.getRequestedPermissions().size();
+    for (int i=0; i < N; i++) {
+      final String permName=pkg.getRequestedPermissions().get(i);
+      final BasePermission bp=mSettings.getPermissionLocked(permName);
+      final boolean appSupportsRuntimePermissions=pkg.getTargetSdkVersion() >= Build.VERSION_CODES.M;
+      String upgradedActivityRecognitionPermission=null;
+      if (DEBUG_INSTALL && bp != null) {
+        Log.i(TAG,"Package " + pkg.getPackageName() + " checking "+ permName+ ": "+ bp);
+      }
+      if (bp == null || getSourcePackageSetting(bp) == null) {
+        if (packageOfInterest == null || packageOfInterest.equals(pkg.getPackageName())) {
+          if (DEBUG_PERMISSIONS) {
+            Slog.i(TAG,"Unknown permission " + permName + " in package "+ pkg.getPackageName());
+          }
+        }
+        continue;
+      }
+      if (!origPermissions.hasRequestedPermission(permName) && (pkg.getImplicitPermissions().contains(permName) || (permName.equals(Manifest.permission.ACTIVITY_RECOGNITION)))) {
+        if (pkg.getImplicitPermissions().contains(permName)) {
+          newImplicitPermissions.add(permName);
+          if (DEBUG_PERMISSIONS) {
+            Slog.i(TAG,permName + " is newly added for " + pkg.getPackageName());
+          }
+        }
+ else {
+          final List<SplitPermissionInfoParcelable> permissionList=getSplitPermissions();
+          int numSplitPerms=permissionList.size();
+          for (int splitPermNum=0; splitPermNum < numSplitPerms; splitPermNum++) {
+            SplitPermissionInfoParcelable sp=permissionList.get(splitPermNum);
+            String splitPermName=sp.getSplitPermission();
+            if (sp.getNewPermissions().contains(permName) && origPermissions.hasInstallPermission(splitPermName)) {
+              upgradedActivityRecognitionPermission=splitPermName;
+              newImplicitPermissions.add(permName);
+              if (DEBUG_PERMISSIONS) {
+                Slog.i(TAG,permName + " is newly added for " + pkg.getPackageName());
+              }
+              break;
+            }
+          }
+        }
+      }
+      if (bp.isRuntimeOnly() && !appSupportsRuntimePermissions) {
+        if (DEBUG_PERMISSIONS) {
+          Log.i(TAG,"Denying runtime-only permission " + bp.getName() + " for package "+ pkg.getPackageName());
+        }
+        continue;
+      }
+      final String perm=bp.getName();
+      boolean allowedSig=false;
+      int grant=GRANT_DENIED;
+      if (bp.isAppOp()) {
+        mSettings.addAppOpPackage(perm,pkg.getPackageName());
+      }
+      if (bp.isNormal()) {
+        grant=GRANT_INSTALL;
+      }
+ else       if (bp.isRuntime()) {
+        if (origPermissions.hasInstallPermission(bp.getName()) || upgradedActivityRecognitionPermission != null) {
+          grant=GRANT_UPGRADE;
+        }
+ else {
+          grant=GRANT_RUNTIME;
+        }
+      }
+ else       if (bp.isSignature()) {
+        allowedSig=grantSignaturePermission(perm,pkg,ps,bp,origPermissions);
+        if (allowedSig) {
+          grant=GRANT_INSTALL;
+        }
+      }
+      if (DEBUG_PERMISSIONS) {
+        Slog.i(TAG,"Considering granting permission " + perm + " to package "+ pkg.getPackageName());
+      }
+      if (grant != GRANT_DENIED) {
+        if (!ps.isSystem() && ps.areInstallPermissionsFixed() && !bp.isRuntime()) {
+          if (!allowedSig && !origPermissions.hasInstallPermission(perm)) {
+            if (!isNewPlatformPermissionForPackage(perm,pkg)) {
+              grant=GRANT_DENIED;
+            }
+          }
+        }
+switch (grant) {
+case GRANT_INSTALL:
+{
+            for (            int userId : UserManagerService.getInstance().getUserIds()) {
+              if (origPermissions.getRuntimePermissionState(perm,userId) != null) {
+                origPermissions.revokeRuntimePermission(bp,userId);
+                origPermissions.updatePermissionFlags(bp,userId,PackageManager.MASK_PERMISSION_FLAGS_ALL,0);
+                updatedUserIds=ArrayUtils.appendInt(updatedUserIds,userId);
+              }
+            }
+            if (permissionsState.grantInstallPermission(bp) != PERMISSION_OPERATION_FAILURE) {
+              changedInstallPermission=true;
+            }
+          }
+        break;
+case GRANT_RUNTIME:
+{
+        boolean hardRestricted=bp.isHardRestricted();
+        boolean softRestricted=bp.isSoftRestricted();
+        for (        int userId : currentUserIds) {
+          final boolean permissionPolicyInitialized=mPermissionPolicyInternal != null && mPermissionPolicyInternal.isInitialized(userId);
+          PermissionState permState=origPermissions.getRuntimePermissionState(perm,userId);
+          int flags=permState != null ? permState.getFlags() : 0;
+          boolean wasChanged=false;
+          boolean restrictionExempt=(origPermissions.getPermissionFlags(bp.name,userId) & FLAGS_PERMISSION_RESTRICTION_ANY_EXEMPT) != 0;
+          boolean restrictionApplied=(origPermissions.getPermissionFlags(bp.name,userId) & FLAG_PERMISSION_APPLY_RESTRICTION) != 0;
+          if (appSupportsRuntimePermissions) {
+            if (permissionPolicyInitialized && hardRestricted) {
+              if (!restrictionExempt) {
+                if (permState != null && permState.isGranted() && permissionsState.revokeRuntimePermission(bp,userId) != PERMISSION_OPERATION_FAILURE) {
+                  wasChanged=true;
+                }
+                if (!restrictionApplied) {
+                  flags|=FLAG_PERMISSION_APPLY_RESTRICTION;
+                  wasChanged=true;
+                }
+              }
+            }
+ else             if (permissionPolicyInitialized && softRestricted) {
+              if (!restrictionExempt && !restrictionApplied) {
+                flags|=FLAG_PERMISSION_APPLY_RESTRICTION;
+                wasChanged=true;
+              }
+            }
+            if ((flags & FLAG_PERMISSION_REVIEW_REQUIRED) != 0) {
+              flags&=~FLAG_PERMISSION_REVIEW_REQUIRED;
+              wasChanged=true;
+            }
+            if ((flags & FLAG_PERMISSION_REVOKED_COMPAT) != 0) {
+              flags&=~FLAG_PERMISSION_REVOKED_COMPAT;
+              wasChanged=true;
+            }
+ else             if (!permissionPolicyInitialized || (!hardRestricted || restrictionExempt)) {
+              if (permState != null && permState.isGranted()) {
+                if (permissionsState.grantRuntimePermission(bp,userId) == PERMISSION_OPERATION_FAILURE) {
+                  wasChanged=true;
+                }
+              }
+            }
+          }
+ else {
+            if (permState == null) {
+              if (PLATFORM_PACKAGE_NAME.equals(bp.getSourcePackageName())) {
+                if (!bp.isRemoved()) {
+                  flags|=FLAG_PERMISSION_REVIEW_REQUIRED | FLAG_PERMISSION_REVOKED_COMPAT;
+                  wasChanged=true;
+                }
+              }
+            }
+            if (!permissionsState.hasRuntimePermission(bp.name,userId) && permissionsState.grantRuntimePermission(bp,userId) != PERMISSION_OPERATION_FAILURE) {
+              wasChanged=true;
+            }
+            if (permissionPolicyInitialized && (hardRestricted || softRestricted) && !restrictionExempt&& !restrictionApplied) {
+              flags|=FLAG_PERMISSION_APPLY_RESTRICTION;
+              wasChanged=true;
+            }
+          }
+          if (permissionPolicyInitialized) {
+            if (!(hardRestricted || softRestricted) || restrictionExempt) {
+              if (restrictionApplied) {
+                flags&=~FLAG_PERMISSION_APPLY_RESTRICTION;
+                if (!appSupportsRuntimePermissions) {
+                  flags|=FLAG_PERMISSION_REVIEW_REQUIRED;
+                }
+                wasChanged=true;
+              }
+            }
+          }
+          if (wasChanged) {
+            updatedUserIds=ArrayUtils.appendInt(updatedUserIds,userId);
+          }
+          permissionsState.updatePermissionFlags(bp,userId,MASK_PERMISSION_FLAGS_ALL,flags);
+        }
+      }
+    break;
+case GRANT_UPGRADE:
+{
+    PermissionState permState=origPermissions.getInstallPermissionState(perm);
+    int flags=(permState != null) ? permState.getFlags() : 0;
+    BasePermission bpToRevoke=upgradedActivityRecognitionPermission == null ? bp : mSettings.getPermissionLocked(upgradedActivityRecognitionPermission);
+    if (origPermissions.revokeInstallPermission(bpToRevoke) != PERMISSION_OPERATION_FAILURE) {
+      origPermissions.updatePermissionFlags(bpToRevoke,UserHandle.USER_ALL,(MASK_PERMISSION_FLAGS_ALL & ~FLAG_PERMISSION_APPLY_RESTRICTION),0);
+      changedInstallPermission=true;
+    }
+    boolean hardRestricted=bp.isHardRestricted();
+    boolean softRestricted=bp.isSoftRestricted();
+    for (    int userId : currentUserIds) {
+      final boolean permissionPolicyInitialized=mPermissionPolicyInternal != null && mPermissionPolicyInternal.isInitialized(userId);
+      boolean wasChanged=false;
+      boolean restrictionExempt=(origPermissions.getPermissionFlags(bp.name,userId) & FLAGS_PERMISSION_RESTRICTION_ANY_EXEMPT) != 0;
+      boolean restrictionApplied=(origPermissions.getPermissionFlags(bp.name,userId) & FLAG_PERMISSION_APPLY_RESTRICTION) != 0;
+      if (appSupportsRuntimePermissions) {
+        if (permissionPolicyInitialized && hardRestricted) {
+          if (!restrictionExempt) {
+            if (permState != null && permState.isGranted() && permissionsState.revokeRuntimePermission(bp,userId) != PERMISSION_OPERATION_FAILURE) {
+              wasChanged=true;
+            }
+            if (!restrictionApplied) {
+              flags|=FLAG_PERMISSION_APPLY_RESTRICTION;
+              wasChanged=true;
+            }
+          }
+        }
+ else         if (permissionPolicyInitialized && softRestricted) {
+          if (!restrictionExempt && !restrictionApplied) {
+            flags|=FLAG_PERMISSION_APPLY_RESTRICTION;
+            wasChanged=true;
+          }
+        }
+        if ((flags & FLAG_PERMISSION_REVIEW_REQUIRED) != 0) {
+          flags&=~FLAG_PERMISSION_REVIEW_REQUIRED;
+          wasChanged=true;
+        }
+        if ((flags & FLAG_PERMISSION_REVOKED_COMPAT) != 0) {
+          flags&=~FLAG_PERMISSION_REVOKED_COMPAT;
+          wasChanged=true;
+        }
+ else         if (!permissionPolicyInitialized || (!hardRestricted || restrictionExempt)) {
+          if (permissionsState.grantRuntimePermission(bp,userId) != PERMISSION_OPERATION_FAILURE) {
+            wasChanged=true;
+          }
+        }
+      }
+ else {
+        if (!permissionsState.hasRuntimePermission(bp.name,userId) && permissionsState.grantRuntimePermission(bp,userId) != PERMISSION_OPERATION_FAILURE) {
+          flags|=FLAG_PERMISSION_REVIEW_REQUIRED;
+          wasChanged=true;
+        }
+        if (permissionPolicyInitialized && (hardRestricted || softRestricted) && !restrictionExempt&& !restrictionApplied) {
+          flags|=FLAG_PERMISSION_APPLY_RESTRICTION;
+          wasChanged=true;
+        }
+      }
+      if (permissionPolicyInitialized) {
+        if (!(hardRestricted || softRestricted) || restrictionExempt) {
+          if (restrictionApplied) {
+            flags&=~FLAG_PERMISSION_APPLY_RESTRICTION;
+            if (!appSupportsRuntimePermissions) {
+              flags|=FLAG_PERMISSION_REVIEW_REQUIRED;
+            }
+            wasChanged=true;
+          }
+        }
+      }
+      if (wasChanged) {
+        updatedUserIds=ArrayUtils.appendInt(updatedUserIds,userId);
+      }
+      permissionsState.updatePermissionFlags(bp,userId,MASK_PERMISSION_FLAGS_ALL,flags);
+    }
+  }
+break;
+default :
+{
+if (packageOfInterest == null || packageOfInterest.equals(pkg.getPackageName())) {
+  if (DEBUG_PERMISSIONS) {
+    Slog.i(TAG,"Not granting permission " + perm + " to package "+ pkg.getPackageName()+ " because it was previously installed without");
+  }
+}
+}
+break;
+}
+}
+ else {
+if (permissionsState.revokeInstallPermission(bp) != PERMISSION_OPERATION_FAILURE) {
+permissionsState.updatePermissionFlags(bp,UserHandle.USER_ALL,MASK_PERMISSION_FLAGS_ALL,0);
+changedInstallPermission=true;
+if (DEBUG_PERMISSIONS) {
+Slog.i(TAG,"Un-granting permission " + perm + " from package "+ pkg.getPackageName()+ " (protectionLevel="+ bp.getProtectionLevel()+ " flags=0x"+ Integer.toHexString(PackageInfoUtils.appInfoFlags(pkg,ps))+ ")");
+}
+}
+ else if (bp.isAppOp()) {
+if (DEBUG_PERMISSIONS && (packageOfInterest == null || packageOfInterest.equals(pkg.getPackageName()))) {
+Slog.i(TAG,"Not granting permission " + perm + " to package "+ pkg.getPackageName()+ " (protectionLevel="+ bp.getProtectionLevel()+ " flags=0x"+ Integer.toHexString(PackageInfoUtils.appInfoFlags(pkg,ps))+ ")");
+}
+}
+}
+}
+if ((changedInstallPermission || replace) && !ps.areInstallPermissionsFixed() && !ps.isSystem() || ps.getPkgState().isUpdatedSystemApp()) {
+ps.setInstallPermissionsFixed(true);
+}
+updatedUserIds=revokePermissionsNoLongerImplicitLocked(permissionsState,pkg,updatedUserIds);
+updatedUserIds=setInitialGrantForNewImplicitPermissionsLocked(origPermissions,permissionsState,pkg,newImplicitPermissions,updatedUserIds);
+updatedUserIds=checkIfLegacyStorageOpsNeedToBeUpdated(pkg,replace,updatedUserIds);
+}
+if (callback != null) {
+callback.onPermissionUpdated(updatedUserIds,runtimePermissionsRevoked);
+}
+for (int userId : updatedUserIds) {
+notifyRuntimePermissionStateChanged(pkg.getPackageName(),userId);
+}
+}

@@ -1,0 +1,31 @@
+DataTransferResponse handleExchange(HttpExchange exchange) throws IOException {
+  Headers requestHeaders=exchange.getRequestHeaders();
+  try {
+    SimpleLoginRequest request=objectMapper.readValue(exchange.getRequestBody(),SimpleLoginRequest.class);
+    String encodedIdCookie=ReferenceApiUtils.getCookie(requestHeaders,JsonKeys.ID_COOKIE_KEY);
+    Preconditions.checkArgument(!Strings.isNullOrEmpty(encodedIdCookie),"Missing encodedIdCookie");
+    Preconditions.checkArgument(!Strings.isNullOrEmpty(encodedIdCookie),"Encoded Id cookie required");
+    UUID jobId=ReferenceApiUtils.decodeJobId(encodedIdCookie);
+    PortabilityJob job=store.findJob(jobId);
+    Preconditions.checkNotNull(job,"existing job not found for jobId: %s",jobId);
+    AuthMode authMode=ReferenceApiUtils.getAuthMode(exchange.getRequestHeaders());
+    String service=(authMode == AuthMode.EXPORT) ? job.exportService() : job.importService();
+    Preconditions.checkState(!Strings.isNullOrEmpty(service),"service not found, service: %s authMode: %s, jobId: %s",service,authMode,jobId);
+    Preconditions.checkArgument(!Strings.isNullOrEmpty(request.getUsername()),"Missing valid username");
+    Preconditions.checkArgument(!Strings.isNullOrEmpty(request.getPassword()),"Missing password");
+    AuthDataGenerator generator=registry.getAuthDataGenerator(service,job.transferDataType(),AuthMode.EXPORT);
+    Preconditions.checkNotNull(generator,"Generator not found for type: %s, service: %s",job.transferDataType(),service);
+    AuthData authData=generator.generateAuthData(apiSettings.getBaseApiUrl(),request.getUsername(),jobId.toString(),null,request.getPassword());
+    Preconditions.checkNotNull(authData,"Auth data should not be null");
+    String encodedSessionKey=job.jobAuthorization().sessionSecretKey();
+    SecretKey key=symmetricKeyGenerator.parse(BaseEncoding.base64Url().decode(encodedSessionKey));
+    String serialized=objectMapper.writeValueAsString(authData);
+    String encryptedAuthData=EncrypterFactory.create(key).encrypt(serialized);
+    ReferenceApiUtils.setCookie(exchange.getResponseHeaders(),encryptedAuthData,authMode);
+    return new DataTransferResponse(job.exportService(),job.importService(),job.transferDataType(),Status.INPROCESS,apiSettings.getBaseUrl() + (authMode == AuthMode.EXPORT ? FrontendConstantUrls.URL_NEXT_PAGE : FrontendConstantUrls.URL_COPY_PAGE));
+  }
+ catch (  Exception e) {
+    logger.debug("Exception occurred while trying to handle request: {}",e);
+    throw e;
+  }
+}

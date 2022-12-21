@@ -1,0 +1,3 @@
+@Override public Map<ChartType,Chart> getCharts(){
+  return this.activeTraceChartMap;
+}

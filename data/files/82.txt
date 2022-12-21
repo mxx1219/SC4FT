@@ -1,0 +1,14 @@
+package com.baomidou.mybatisplus.extension;
+import java.util.Map;
+import org.apache.ibatis.reflection.MetaObject;
+import org.apache.ibatis.reflection.wrapper.ObjectWrapper;
+import org.apache.ibatis.reflection.wrapper.ObjectWrapperFactory;
+import com.baomidou.mybatisplus.extension.handlers.MybatisMapWrapper;
+public class MybatisMapWrapperFactory implements ObjectWrapperFactory {
+  @Override public boolean hasWrapperFor(  Object object){
+    return object != null && object instanceof Map;
+  }
+  @Override public ObjectWrapper getWrapperFor(  MetaObject metaObject,  Object object){
+    return new MybatisMapWrapper(metaObject,(Map)object);
+  }
+}

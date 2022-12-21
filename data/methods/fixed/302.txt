@@ -1,0 +1,17 @@
+@Override public boolean onSingleTapUp(MotionEvent e){
+  if (!isEditable)   return false;
+  performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+  int pointerId=e.getPointerId(0);
+  float x=e.getX(pointerId);
+  float y=e.getY(pointerId);
+  final Long timestamp=positionToTimestamp(x,y);
+  if (timestamp == null)   return false;
+  int offset=timestampToOffset(timestamp);
+  if (offset < checkmarks.length) {
+    boolean isChecked=checkmarks[offset] == CHECKED_EXPLICITLY;
+    checkmarks[offset]=(isChecked ? UNCHECKED : CHECKED_EXPLICITLY);
+  }
+  controller.onToggleCheckmark(timestamp);
+  postInvalidate();
+  return true;
+}

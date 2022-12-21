@@ -1,0 +1,39 @@
+private void buildHead(AnalysisContext analysisContext,Map<Integer,CellData> cellDataMap){
+  if (!HeadKindEnum.CLASS.equals(analysisContext.currentReadHolder().excelReadHeadProperty().getHeadKind())) {
+    return;
+  }
+  Map<Integer,String> dataMap=ConverterUtils.convertToStringMap(cellDataMap,analysisContext.currentReadHolder());
+  ExcelReadHeadProperty excelHeadPropertyData=analysisContext.readSheetHolder().excelReadHeadProperty();
+  Map<Integer,Head> headMapData=excelHeadPropertyData.getHeadMap();
+  Map<Integer,ExcelContentProperty> contentPropertyMapData=excelHeadPropertyData.getContentPropertyMap();
+  Map<Integer,Head> tmpHeadMap=new HashMap<Integer,Head>(headMapData.size() * 4 / 3 + 1);
+  Map<Integer,ExcelContentProperty> tmpContentPropertyMap=new HashMap<Integer,ExcelContentProperty>(contentPropertyMapData.size() * 4 / 3 + 1);
+  for (  Map.Entry<Integer,Head> entry : headMapData.entrySet()) {
+    Head headData=entry.getValue();
+    if (headData.getForceIndex() || !headData.getForceName()) {
+      tmpHeadMap.put(entry.getKey(),headData);
+      tmpContentPropertyMap.put(entry.getKey(),contentPropertyMapData.get(entry.getKey()));
+      continue;
+    }
+    List<String> headNameList=headData.getHeadNameList();
+    String headName=headNameList.get(headNameList.size() - 1);
+    for (    Map.Entry<Integer,String> stringEntry : dataMap.entrySet()) {
+      String headString=stringEntry.getValue();
+      Integer stringKey=stringEntry.getKey();
+      if (StringUtils.isEmpty(headString)) {
+        continue;
+      }
+      if (analysisContext.currentReadHolder().globalConfiguration().getAutoTrim()) {
+        headString=headString.trim();
+      }
+      if (headName.equals(headString)) {
+        headData.setColumnIndex(stringKey);
+        tmpHeadMap.put(stringKey,headData);
+        tmpContentPropertyMap.put(stringKey,contentPropertyMapData.get(entry.getKey()));
+        break;
+      }
+    }
+  }
+  excelHeadPropertyData.setHeadMap(tmpHeadMap);
+  excelHeadPropertyData.setContentPropertyMap(tmpContentPropertyMap);
+}

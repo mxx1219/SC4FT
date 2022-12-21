@@ -1,0 +1,5 @@
+@Override public void writeTo(StreamOutput out) throws IOException {
+  out.writeOptionalWriteable(masterNode.orElse(null));
+  out.writeList(knownPeers);
+  out.writeLong(term);
+}

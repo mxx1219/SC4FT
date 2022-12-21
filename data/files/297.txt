@@ -1,0 +1,312 @@
+package net.bytebuddy.description.type;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
+import net.bytebuddy.description.DeclaredByType;
+import net.bytebuddy.description.NamedElement;
+import net.bytebuddy.description.annotation.AnnotationDescription;
+import net.bytebuddy.description.annotation.AnnotationList;
+import net.bytebuddy.description.annotation.AnnotationSource;
+import net.bytebuddy.description.method.MethodDescription;
+import net.bytebuddy.matcher.ElementMatcher;
+import java.lang.reflect.AnnotatedElement;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Type;
+import java.security.AccessController;
+import java.security.PrivilegedAction;
+import java.util.Collections;
+import java.util.List;
+import static net.bytebuddy.matcher.ElementMatchers.named;
+public interface RecordComponentDescription extends DeclaredByType, NamedElement, AnnotationSource {
+  TypeDescription.Generic getType();
+  MethodDescription.InDefinedShape getAccessor();
+  Token asToken(  ElementMatcher<? super TypeDescription> matcher);
+abstract class AbstractBase implements RecordComponentDescription {
+    public MethodDescription.InDefinedShape getAccessor(){
+      return getDeclaringType().getDeclaredMethods().filter(named(getActualName())).getOnly().asDefined();
+    }
+    public Token asToken(    ElementMatcher<? super TypeDescription> matcher){
+      return new Token(getActualName(),getType().accept(new TypeDescription.Generic.Visitor.Substitutor.ForDetachment(matcher)),getDeclaredAnnotations());
+    }
+    @Override public int hashCode(){
+      return getActualName().hashCode();
+    }
+    @Override public boolean equals(    Object other){
+      if (this == other) {
+        return true;
+      }
+ else       if (!(other instanceof RecordComponentDescription)) {
+        return false;
+      }
+      RecordComponentDescription recordComponentDescription=(RecordComponentDescription)other;
+      return getActualName().equals(recordComponentDescription.getActualName());
+    }
+    @Override public String toString(){
+      return getType().getTypeName() + " " + getActualName();
+    }
+  }
+class ForLoadedRecordComponent extends AbstractBase {
+    protected static final Dispatcher DISPATCHER=AccessController.doPrivileged(Dispatcher.CreationAction.INSTANCE);
+    private final AnnotatedElement recordComponent;
+    protected ForLoadedRecordComponent(    AnnotatedElement recordComponent){
+      this.recordComponent=recordComponent;
+    }
+    public static RecordComponentDescription of(    Object recordComponent){
+      if (!DISPATCHER.isInstance(recordComponent)) {
+        throw new IllegalArgumentException("Not a record component: " + recordComponent);
+      }
+      return new ForLoadedRecordComponent((AnnotatedElement)recordComponent);
+    }
+    public TypeDescription.Generic getType(){
+      return new TypeDescription.Generic.LazyProjection.OfRecordComponent(recordComponent);
+    }
+    @Override public MethodDescription.InDefinedShape getAccessor(){
+      return new MethodDescription.ForLoadedMethod(DISPATCHER.getAccessor(recordComponent));
+    }
+    public TypeDefinition getDeclaringType(){
+      return TypeDescription.ForLoadedType.of(DISPATCHER.getDeclaringType(recordComponent));
+    }
+    public String getActualName(){
+      return DISPATCHER.getName(recordComponent);
+    }
+    public AnnotationList getDeclaredAnnotations(){
+      return new AnnotationList.ForLoadedAnnotations(recordComponent.getDeclaredAnnotations());
+    }
+protected interface Dispatcher {
+      boolean isInstance(      Object instance);
+      Object[] getRecordComponents(      Class<?> type);
+      boolean isRecord(      Class<?> type);
+      String getName(      Object recordComponent);
+      Class<?> getDeclaringType(      Object recordComponent);
+      Method getAccessor(      Object recordComponent);
+      Class<?> getType(      Object recordComponent);
+      Type getGenericType(      Object recordComponent);
+      AnnotatedElement getAnnotatedType(      Object recordComponent);
+      enum CreationAction;
+{
+      }
+      public Dispatcher run(){
+        try {
+          Class<?> recordComponent=Class.forName("java.lang.reflect.RecordComponent");
+          return new ForJava14CapableVm(recordComponent,Class.class.getMethod("getRecordComponents"),Class.class.getMethod("isRecord"),recordComponent.getMethod("getName"),recordComponent.getMethod("getDeclaringRecord"),recordComponent.getMethod("getAccessor"),recordComponent.getMethod("getType"),recordComponent.getMethod("getGenericType"),recordComponent.getMethod("getAnnotatedType"));
+        }
+ catch (        ClassNotFoundException ignored) {
+          return ForLegacyVm.INSTANCE;
+        }
+catch (        NoSuchMethodException ignored) {
+          return ForLegacyVm.INSTANCE;
+        }
+      }
+    }
+    enum ForLegacyVm;
+{
+    }
+    public boolean isInstance(    Object instance){
+      return false;
+    }
+    public Object[] getRecordComponents(    Class<?> type){
+      return new Object[0];
+    }
+    public boolean isRecord(    Class<?> type){
+      return false;
+    }
+    public String getName(    Object recordComponent){
+      throw new IllegalStateException("The current VM does not support record components");
+    }
+    public Class<?> getDeclaringType(    Object recordComponent){
+      throw new IllegalStateException("The current VM does not support record components");
+    }
+    public Method getAccessor(    Object recordComponent){
+      throw new IllegalStateException("The current VM does not support record components");
+    }
+    public Class<?> getType(    Object recordComponent){
+      throw new IllegalStateException("The current VM does not support record components");
+    }
+    public Type getGenericType(    Object recordComponent){
+      throw new IllegalStateException("The current VM does not support record components");
+    }
+    public AnnotatedElement getAnnotatedType(    Object recordComponent){
+      throw new IllegalStateException("The current VM does not support record components");
+    }
+  }
+@HashCodeAndEqualsPlugin.Enhance class ForJava14CapableVm implements Dispatcher {
+    private final Class<?> recordComponent;
+    private final Method getRecordComponents;
+    private final Method isRecord;
+    private final Method getName;
+    private final Method getDeclaringType;
+    private final Method getAccessor;
+    private final Method getType;
+    private final Method getGenericType;
+    private final Method getAnnotatedType;
+    protected ForJava14CapableVm(    Class<?> recordComponent,    Method getRecordComponents,    Method isRecord,    Method getName,    Method getDeclaringType,    Method getAccessor,    Method getType,    Method getGenericType,    Method getAnnotatedType){
+      this.recordComponent=recordComponent;
+      this.getRecordComponents=getRecordComponents;
+      this.isRecord=isRecord;
+      this.getName=getName;
+      this.getDeclaringType=getDeclaringType;
+      this.getAccessor=getAccessor;
+      this.getType=getType;
+      this.getGenericType=getGenericType;
+      this.getAnnotatedType=getAnnotatedType;
+    }
+    public boolean isInstance(    Object instance){
+      return recordComponent.isInstance(instance);
+    }
+    public Object[] getRecordComponents(    Class<?> type){
+      try {
+        return (Object[])getRecordComponents.invoke(type);
+      }
+ catch (      IllegalAccessException exception) {
+        throw new IllegalStateException("Cannot access java.lang.Class#getRecordComponents",exception);
+      }
+catch (      InvocationTargetException exception) {
+        throw new IllegalStateException("Error invoking java.lang.Class#getRecordComponents",exception.getCause());
+      }
+    }
+    public boolean isRecord(    Class<?> type){
+      try {
+        return (Boolean)isRecord.invoke(type);
+      }
+ catch (      IllegalAccessException exception) {
+        throw new IllegalStateException("Cannot access java.lang.Class#isRecord",exception);
+      }
+catch (      InvocationTargetException exception) {
+        throw new IllegalStateException("Error invoking java.lang.Class#isRecord",exception.getCause());
+      }
+    }
+    public String getName(    Object recordComponent){
+      try {
+        return (String)getName.invoke(recordComponent);
+      }
+ catch (      IllegalAccessException exception) {
+        throw new IllegalStateException("Cannot access java.lang.reflection.RecordComponent#getName",exception);
+      }
+catch (      InvocationTargetException exception) {
+        throw new IllegalStateException("Error invoking java.lang.reflection.RecordComponent#getName",exception.getCause());
+      }
+    }
+    public Class<?> getDeclaringType(    Object recordComponent){
+      try {
+        return (Class<?>)getDeclaringType.invoke(recordComponent);
+      }
+ catch (      IllegalAccessException exception) {
+        throw new IllegalStateException("Cannot access java.lang.reflection.RecordComponent#getDeclaringType",exception);
+      }
+catch (      InvocationTargetException exception) {
+        throw new IllegalStateException("Error invoking java.lang.reflection.RecordComponent#getDeclaringType",exception.getCause());
+      }
+    }
+    public Method getAccessor(    Object recordComponent){
+      try {
+        return (Method)getAccessor.invoke(recordComponent);
+      }
+ catch (      IllegalAccessException exception) {
+        throw new IllegalStateException("Cannot access java.lang.reflection.RecordComponent#getAccessor",exception);
+      }
+catch (      InvocationTargetException exception) {
+        throw new IllegalStateException("Error invoking java.lang.reflection.RecordComponent#getAccessor",exception.getCause());
+      }
+    }
+    public Class<?> getType(    Object recordComponent){
+      try {
+        return (Class<?>)getType.invoke(recordComponent);
+      }
+ catch (      IllegalAccessException exception) {
+        throw new IllegalStateException("Cannot access java.lang.reflection.RecordComponent#getType",exception);
+      }
+catch (      InvocationTargetException exception) {
+        throw new IllegalStateException("Error invoking java.lang.reflection.RecordComponent#getType",exception.getCause());
+      }
+    }
+    public Type getGenericType(    Object recordComponent){
+      try {
+        return (Type)getGenericType.invoke(recordComponent);
+      }
+ catch (      IllegalAccessException exception) {
+        throw new IllegalStateException("Cannot access java.lang.reflection.RecordComponent#getGenericType",exception);
+      }
+catch (      InvocationTargetException exception) {
+        throw new IllegalStateException("Error invoking java.lang.reflection.RecordComponent#getGenericType",exception.getCause());
+      }
+    }
+    public AnnotatedElement getAnnotatedType(    Object recordComponent){
+      try {
+        return (AnnotatedElement)getAnnotatedType.invoke(recordComponent);
+      }
+ catch (      IllegalAccessException exception) {
+        throw new IllegalStateException("Cannot access java.lang.reflection.RecordComponent#getAnnotatedType",exception);
+      }
+catch (      InvocationTargetException exception) {
+        throw new IllegalStateException("Error invoking java.lang.reflection.RecordComponent#getAnnotatedType",exception.getCause());
+      }
+    }
+  }
+}
+class Latent extends AbstractBase {
+  private final TypeDescription declaringType;
+  private final String name;
+  private final TypeDescription.Generic type;
+  private final List<? extends AnnotationDescription> annotations;
+  public Latent(  TypeDescription declaringType,  Token token){
+    this(declaringType,token.getName(),token.getType(),token.getAnnotations());
+  }
+  public Latent(  TypeDescription declaringType,  String name,  TypeDescription.Generic type,  List<? extends AnnotationDescription> annotations){
+    this.declaringType=declaringType;
+    this.name=name;
+    this.type=type;
+    this.annotations=annotations;
+  }
+  public TypeDescription.Generic getType(){
+    return type.accept(TypeDescription.Generic.Visitor.Substitutor.ForAttachment.of(this));
+  }
+  public TypeDefinition getDeclaringType(){
+    return declaringType;
+  }
+  public String getActualName(){
+    return name;
+  }
+  public AnnotationList getDeclaredAnnotations(){
+    return new AnnotationList.Explicit(annotations);
+  }
+}
+class Token {
+  private final String name;
+  private final TypeDescription.Generic type;
+  private final List<? extends AnnotationDescription> annotations;
+  public Token(  String name,  TypeDescription.Generic type){
+    this(name,type,Collections.<AnnotationDescription>emptyList());
+  }
+  public Token(  String name,  TypeDescription.Generic type,  List<? extends AnnotationDescription> annotations){
+    this.name=name;
+    this.type=type;
+    this.annotations=annotations;
+  }
+  public String getName(){
+    return name;
+  }
+  public TypeDescription.Generic getType(){
+    return type;
+  }
+  public List<? extends AnnotationDescription> getAnnotations(){
+    return annotations;
+  }
+  public Token accept(  TypeDescription.Generic.Visitor<? extends TypeDescription.Generic> visitor){
+    return new Token(name,type.accept(visitor),annotations);
+  }
+  @Override public int hashCode(){
+    int result=name.hashCode();
+    result=31 * result + type.hashCode();
+    result=31 * result + annotations.hashCode();
+    return result;
+  }
+  @Override public boolean equals(  Object other){
+    if (this == other) {
+      return true;
+    }
+ else     if (other == null || getClass() != other.getClass()) {
+      return false;
+    }
+    RecordComponentDescription.Token token=(RecordComponentDescription.Token)other;
+    return name.equals(token.name) && type.equals(token.type) && annotations.equals(token.annotations);
+  }
+}

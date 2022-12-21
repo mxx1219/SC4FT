@@ -1,0 +1,13 @@
+private static boolean isGroovyMetaClassProperty(final ExecutableElement method){
+  final String methodName=method.getSimpleName().toString();
+  if (!"setMetaClass".equals(methodName)) {
+    return false;
+  }
+  if (method.getReturnType() instanceof DeclaredType) {
+    final DeclaredType returnType=(DeclaredType)method.getReturnType();
+    return "groovy.lang.MetaClass".equals(returnType.asElement().getSimpleName().toString());
+  }
+ else {
+    return method.toString().contains("(groovy.lang.MetaClass)");
+  }
+}

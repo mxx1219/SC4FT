@@ -1,0 +1,10 @@
+@Nullable @Override public Html.TagHandler getTagHandler(String html){
+  boolean isCustomizable=!html.contains("<table>");
+  if (isCustomizable) {
+    final HtmlTagHandler htmlTagHandler=new HtmlTagHandler();
+    htmlTagHandler.mContext=mContext;
+    htmlTagHandler.setCodeBlockBackgroundColor(ThemeUtils.INSTANCE.getColor(mContext,R.attr.markdown_block_background_color));
+    return htmlTagHandler;
+  }
+  return null;
+}

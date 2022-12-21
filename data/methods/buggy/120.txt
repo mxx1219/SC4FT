@@ -1,0 +1,31 @@
+@Override public synchronized void put(String key,Versioned<String> value,String transforms) throws VoldemortException {
+  StoreUtils.assertValidKey(key);
+  if (null == value.getValue()) {
+    throw new VoldemortException("metadata cannot be null !!");
+  }
+  File[] files=getDirectory(key).listFiles();
+  for (  File file : files) {
+    if (file.getName().equals(key)) {
+      VectorClock clock=readVersion(key);
+      if (value.getVersion().compare(clock) == Occurred.AFTER) {
+      }
+ else       if (value.getVersion().compare(clock) == Occurred.BEFORE) {
+        throw new ObsoleteVersionException("A successor version " + clock + "  to this "+ value.getVersion()+ " exists for key "+ key);
+      }
+ else       if (value.getVersion().compare(clock) == Occurred.CONCURRENTLY) {
+        throw new ObsoleteVersionException("Concurrent Operation not allowed on Metadata.");
+      }
+    }
+  }
+  File keyFile=new File(getDirectory(key),key);
+  VectorClock newClock=(VectorClock)value.getVersion();
+  if (!keyFile.exists() || keyFile.delete()) {
+    try {
+      FileUtils.writeStringToFile(keyFile,value.getValue(),"UTF-8");
+      writeVersion(key,newClock);
+    }
+ catch (    IOException e) {
+      throw new VoldemortException(e);
+    }
+  }
+}

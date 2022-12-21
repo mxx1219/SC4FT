@@ -1,0 +1,7 @@
+protected void updateAddRequestQuantities(OrderItemRequestDTO itemRequest,Long originalOrderItemId){
+  OrderItem orderItem=orderItemService.readOrderItemById(originalOrderItemId);
+  itemRequest.setQuantity(orderItem.getQuantity());
+  for (  OrderItemRequestDTO childDTO : itemRequest.getChildOrderItems()) {
+    childDTO.setQuantity(childDTO.getQuantity() * orderItem.getQuantity());
+  }
+}

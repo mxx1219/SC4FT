@@ -1,0 +1,3 @@
+public static Statement createValueVar(Variable name,grakn.core.graql.query.predicate.ValuePredicate pred){
+  return name.val(pred);
+}

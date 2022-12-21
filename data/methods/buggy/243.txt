@@ -1,0 +1,44 @@
+public void appendHead(Response res) throws IOException {
+  if (log.isDebugEnabled())   log.debug("COMMIT sending headers " + res + " "+ res.getMimeHeaders());
+  C2BConverter c2b=mc.getConverter();
+  outputMsg.reset();
+  outputMsg.appendByte(AjpConstants.JK_AJP13_SEND_HEADERS);
+  outputMsg.appendInt(res.getStatus());
+  String message=null;
+  if (org.apache.coyote.Constants.USE_CUSTOM_STATUS_MSG_IN_HEADER) {
+    message=res.getMessage();
+  }
+  if (message == null) {
+    message=HttpMessages.getMessage(res.getStatus());
+  }
+ else {
+    message=message.replace('\n',' ').replace('\r',' ');
+  }
+  tempMB.setString(message);
+  c2b.convert(tempMB);
+  outputMsg.appendBytes(tempMB);
+  MimeHeaders headers=res.getMimeHeaders();
+  String contentType=res.getContentType();
+  if (contentType != null) {
+    headers.setValue("Content-Type").setString(contentType);
+  }
+  String contentLanguage=res.getContentLanguage();
+  if (contentLanguage != null) {
+    headers.setValue("Content-Language").setString(contentLanguage);
+  }
+  long contentLength=res.getContentLengthLong();
+  if (contentLength >= 0) {
+    headers.setValue("Content-Length").setLong(contentLength);
+  }
+  int numHeaders=headers.size();
+  outputMsg.appendInt(numHeaders);
+  for (int i=0; i < numHeaders; i++) {
+    MessageBytes hN=headers.getName(i);
+    c2b.convert(hN);
+    outputMsg.appendBytes(hN);
+    MessageBytes hV=headers.getValue(i);
+    c2b.convert(hV);
+    outputMsg.appendBytes(hV);
+  }
+  mc.getSource().send(outputMsg,mc);
+}

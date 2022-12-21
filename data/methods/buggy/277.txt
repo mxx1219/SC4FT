@@ -1,0 +1,14 @@
+public SignificantTextAggregatorFactory(String name,IncludeExclude includeExclude,QueryBuilder backgroundFilter,TermsAggregator.BucketCountThresholds bucketCountThresholds,SignificanceHeuristic significanceHeuristic,AggregationContext context,AggregatorFactory parent,AggregatorFactories.Builder subFactoriesBuilder,String fieldName,String[] sourceFieldNames,boolean filterDuplicateText,Map<String,Object> metadata) throws IOException {
+  super(name,context,parent,subFactoriesBuilder,metadata);
+  this.fieldType=context.getFieldType(fieldName);
+  if (fieldType != null && fieldType.indexAnalyzer() == null) {
+    throw new IllegalArgumentException("Field [" + fieldType.name() + "] has no analyzer, but SignificantText "+ "requires an analyzed field");
+  }
+  this.indexedFieldName=fieldType != null ? fieldType.name() : fieldName;
+  this.sourceFieldNames=sourceFieldNames == null ? new String[]{indexedFieldName} : sourceFieldNames;
+  this.includeExclude=includeExclude;
+  this.backgroundFilter=backgroundFilter;
+  this.filterDuplicateText=filterDuplicateText;
+  this.bucketCountThresholds=bucketCountThresholds;
+  this.significanceHeuristic=significanceHeuristic;
+}

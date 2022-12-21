@@ -1,0 +1,8 @@
+public static Object getGroovyObjectProperty(Class senderClass,GroovyObject receiver,String messageName) throws Throwable {
+  try {
+    return receiver.getProperty(messageName);
+  }
+ catch (  GroovyRuntimeException gre) {
+    throw unwrap(gre);
+  }
+}

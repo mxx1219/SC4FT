@@ -1,0 +1,13 @@
+@Override public boolean supports(final Set<AuthenticationHandler> handlers,final AuthenticationTransaction transaction){
+  val service=transaction.getService();
+  if (service != null) {
+    val registeredService=this.servicesManager.findServiceBy(service);
+    LOGGER.debug("Located registered service definition [{}] for this authentication transaction",registeredService);
+    if (registeredService == null || !registeredService.getAccessStrategy().isServiceAccessAllowed()) {
+      LOGGER.warn("Service [{}] is not allowed to use SSO.",registeredService);
+      throw new UnauthorizedSsoServiceException();
+    }
+    return !registeredService.getRequiredHandlers().isEmpty();
+  }
+  return false;
+}

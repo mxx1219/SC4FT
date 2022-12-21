@@ -1,0 +1,147 @@
+package io.grpc.benchmarks.qps;
+import java.lang.Math.max;
+import java.lang.String.CASE_INSENSITIVE_ORDER;
+import com.google.common.base.Strings;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
+public abstract class AbstractConfigurationBuilder<T extends Configuration> implements Configuration.Builder<T> {
+  private static final Param HELP=new Param(){
+    @Override public String getName(){
+      return "help";
+    }
+    @Override public String getType(){
+      return "";
+    }
+    @Override public String getDescription(){
+      return "Print this text.";
+    }
+    @Override public boolean isRequired(){
+      return false;
+    }
+    @Override public String getDefaultValue(){
+      return null;
+    }
+    @Override public void setValue(    Configuration config,    String value){
+      throw new UnsupportedOperationException();
+    }
+  }
+;
+protected interface Param {
+    String getName();
+    String getType();
+    String getDescription();
+    String getDefaultValue();
+    boolean isRequired();
+    void setValue(    Configuration config,    String value);
+  }
+  @Override public final T build(  String[] args){
+    T config=newConfiguration();
+    Map<String,Param> paramMap=getParamMap();
+    Set<String> appliedParams=new TreeSet<String>(CASE_INSENSITIVE_ORDER);
+    for (    String arg : args) {
+      if (!arg.startsWith("--")) {
+        throw new IllegalArgumentException("All arguments must start with '--': " + arg);
+      }
+      String[] pair=arg.substring(2).split("=",2);
+      String key=pair[0];
+      String value="";
+      if (pair.length == 2) {
+        value=pair[1];
+      }
+      if (HELP.getName().equalsIgnoreCase(key)) {
+        throw new IllegalArgumentException("Help requested");
+      }
+      Param param=paramMap.get(key);
+      if (param == null) {
+        throw new IllegalArgumentException("Unsupported argument: " + key);
+      }
+      param.setValue(config,value);
+      appliedParams.add(key);
+    }
+    for (    Param param : getParams()) {
+      if (param.isRequired() && !appliedParams.contains(param.getName())) {
+        throw new IllegalArgumentException("Missing required option '--" + param.getName() + "'.");
+      }
+    }
+    return build0(config);
+  }
+  @Override public final void printUsage(){
+    System.out.println("Usage: [ARGS...]");
+    int column1Width=0;
+    List<Param> params=new ArrayList<Param>();
+    params.add(HELP);
+    params.addAll(getParams());
+    for (    Param param : params) {
+      column1Width=max(commandLineFlag(param).length(),column1Width);
+    }
+    int column1Start=2;
+    int column2Start=column1Start + column1Width + 2;
+    for (    Param param : params) {
+      StringBuilder sb=new StringBuilder();
+      sb.append(Strings.repeat(" ",column1Start));
+      sb.append(commandLineFlag(param));
+      sb.append(Strings.repeat(" ",column2Start - sb.length()));
+      String message=param.getDescription();
+      sb.append(wordWrap(message,column2Start,80));
+      if (param.isRequired()) {
+        sb.append(Strings.repeat(" ",column2Start));
+        sb.append("[Required]\n");
+      }
+ else       if (param.getDefaultValue() != null && !param.getDefaultValue().isEmpty()) {
+        sb.append(Strings.repeat(" ",column2Start));
+        sb.append("[Default=" + param.getDefaultValue() + "]\n");
+      }
+      System.out.println(sb);
+    }
+    System.out.println();
+  }
+  protected abstract T newConfiguration();
+  protected abstract Collection<Param> getParams();
+  protected abstract T build0(  T config);
+  private Map<String,Param> getParamMap(){
+    Map<String,Param> map=new TreeMap<String,Param>(CASE_INSENSITIVE_ORDER);
+    for (    Param param : getParams()) {
+      map.put(param.getName(),param);
+    }
+    return map;
+  }
+  private static String commandLineFlag(  Param param){
+    String name=param.getName().toLowerCase();
+    String type=(!param.getType().isEmpty() ? '=' + param.getType() : "");
+    return "--" + name + type;
+  }
+  private static String wordWrap(  String text,  int startPos,  int maxPos){
+    StringBuilder builder=new StringBuilder();
+    int pos=startPos;
+    String[] parts=text.split("\\n");
+    boolean isBulleted=parts.length > 1;
+    for (    String part : parts) {
+      int lineStart=startPos;
+      while (!part.isEmpty()) {
+        if (pos < lineStart) {
+          builder.append(Strings.repeat(" ",lineStart - pos));
+          pos=lineStart;
+        }
+        int maxLength=maxPos - pos;
+        int length=part.length();
+        if (length > maxLength) {
+          length=part.lastIndexOf(' ',maxPos - pos) + 1;
+          if (length == 0) {
+            length=part.length();
+          }
+        }
+        builder.append(part.substring(0,length));
+        part=part.substring(length);
+        builder.append("\n");
+        pos=0;
+        lineStart=isBulleted ? startPos + 2 : startPos;
+      }
+    }
+    return builder.toString();
+  }
+}

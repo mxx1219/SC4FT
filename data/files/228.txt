@@ -1,0 +1,1216 @@
+package android.widget;
+import android.view.ViewGroup.LayoutParams.MATCH_PARENT;
+import android.view.ViewGroup.LayoutParams.WRAP_CONTENT;
+import android.view.WindowManager.LayoutParams.PRIVATE_FLAG_LAYOUT_CHILD_WINDOW_IN_PARENT_FRAME;
+import android.view.WindowManager.LayoutParams.PRIVATE_FLAG_WILL_NOT_REPLACE_ON_RELAUNCH;
+import android.annotation.NonNull;
+import android.annotation.Nullable;
+import android.content.Context;
+import android.content.res.TypedArray;
+import android.graphics.PixelFormat;
+import android.graphics.Rect;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.StateListDrawable;
+import android.os.Build;
+import android.os.IBinder;
+import android.transition.Transition;
+import android.transition.Transition.EpicenterCallback;
+import android.transition.Transition.TransitionListener;
+import android.transition.TransitionInflater;
+import android.transition.TransitionListenerAdapter;
+import android.transition.TransitionManager;
+import android.transition.TransitionSet;
+import android.util.AttributeSet;
+import android.view.Gravity;
+import android.view.KeyEvent;
+import android.view.KeyboardShortcutGroup;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.View.OnAttachStateChangeListener;
+import android.view.View.OnTouchListener;
+import android.view.ViewGroup;
+import android.view.ViewParent;
+import android.view.ViewTreeObserver;
+import android.view.ViewTreeObserver.OnGlobalLayoutListener;
+import android.view.ViewTreeObserver.OnScrollChangedListener;
+import android.view.WindowManager;
+import android.view.WindowManager.LayoutParams;
+import android.view.WindowManager.LayoutParams.SoftInputModeFlags;
+import android.view.WindowManagerGlobal;
+import com.android.internal.R;
+import java.lang.ref.WeakReference;
+import java.util.List;
+public class PopupWindow {
+  public static final int INPUT_METHOD_FROM_FOCUSABLE=0;
+  public static final int INPUT_METHOD_NEEDED=1;
+  public static final int INPUT_METHOD_NOT_NEEDED=2;
+  private static final int DEFAULT_ANCHORED_GRAVITY=Gravity.TOP | Gravity.START;
+  private static final int ANIMATION_STYLE_DEFAULT=-1;
+  private final int[] mTmpDrawingLocation=new int[2];
+  private final int[] mTmpScreenLocation=new int[2];
+  private final int[] mTmpAppLocation=new int[2];
+  private final Rect mTempRect=new Rect();
+  private Context mContext;
+  private WindowManager mWindowManager;
+  private WeakReference<View> mParentRootView;
+  private boolean mIsShowing;
+  private boolean mIsTransitioningToDismiss;
+  private boolean mIsDropdown;
+  private PopupDecorView mDecorView;
+  private View mBackgroundView;
+  private View mContentView;
+  private boolean mFocusable;
+  private int mInputMethodMode=INPUT_METHOD_FROM_FOCUSABLE;
+  @SoftInputModeFlags private int mSoftInputMode=WindowManager.LayoutParams.SOFT_INPUT_STATE_UNCHANGED;
+  private boolean mTouchable=true;
+  private boolean mOutsideTouchable=false;
+  private boolean mClippingEnabled=true;
+  private int mSplitTouchEnabled=-1;
+  private boolean mLayoutInScreen;
+  private boolean mClipToScreen;
+  private boolean mAllowScrollingAnchorParent=true;
+  private boolean mLayoutInsetDecor=false;
+  private boolean mNotTouchModal;
+  private boolean mAttachedInDecor=true;
+  private boolean mAttachedInDecorSet=false;
+  private OnTouchListener mTouchInterceptor;
+  private int mWidthMode;
+  private int mWidth=LayoutParams.WRAP_CONTENT;
+  private int mLastWidth;
+  private int mHeightMode;
+  private int mHeight=LayoutParams.WRAP_CONTENT;
+  private int mLastHeight;
+  private float mElevation;
+  private Drawable mBackground;
+  private Drawable mAboveAnchorBackgroundDrawable;
+  private Drawable mBelowAnchorBackgroundDrawable;
+  private Transition mEnterTransition;
+  private Transition mExitTransition;
+  private Rect mEpicenterBounds;
+  private boolean mAboveAnchor;
+  private int mWindowLayoutType=WindowManager.LayoutParams.TYPE_APPLICATION_PANEL;
+  private OnDismissListener mOnDismissListener;
+  private boolean mIgnoreCheekPress=false;
+  private int mAnimationStyle=ANIMATION_STYLE_DEFAULT;
+  private int mGravity=Gravity.NO_GRAVITY;
+  private static final int[] ABOVE_ANCHOR_STATE_SET=new int[]{com.android.internal.R.attr.state_above_anchor};
+  private final OnAttachStateChangeListener mOnAnchorDetachedListener=new OnAttachStateChangeListener(){
+    @Override public void onViewAttachedToWindow(    View v){
+      alignToAnchor();
+    }
+    @Override public void onViewDetachedFromWindow(    View v){
+    }
+  }
+;
+  private final OnAttachStateChangeListener mOnAnchorRootDetachedListener=new OnAttachStateChangeListener(){
+    @Override public void onViewAttachedToWindow(    View v){
+    }
+    @Override public void onViewDetachedFromWindow(    View v){
+      mIsAnchorRootAttached=false;
+    }
+  }
+;
+  private WeakReference<View> mAnchor;
+  private WeakReference<View> mAnchorRoot;
+  private boolean mIsAnchorRootAttached;
+  private final OnScrollChangedListener mOnScrollChangedListener=null;
+  private final View.OnLayoutChangeListener mOnLayoutChangeListener=null;
+  private int mAnchorXoff;
+  private int mAnchorYoff;
+  private int mAnchoredGravity;
+  private boolean mOverlapAnchor;
+  private boolean mPopupViewInitialLayoutDirectionInherited;
+  public PopupWindow(  Context context){
+    this(context,null);
+  }
+  public PopupWindow(  Context context,  AttributeSet attrs){
+    this(context,attrs,com.android.internal.R.attr.popupWindowStyle);
+  }
+  public PopupWindow(  Context context,  AttributeSet attrs,  int defStyleAttr){
+    this(context,attrs,defStyleAttr,0);
+  }
+  public PopupWindow(  Context context,  AttributeSet attrs,  int defStyleAttr,  int defStyleRes){
+    mContext=context;
+    mWindowManager=(WindowManager)context.getSystemService(Context.WINDOW_SERVICE);
+    final TypedArray a=context.obtainStyledAttributes(attrs,R.styleable.PopupWindow,defStyleAttr,defStyleRes);
+    final Drawable bg=a.getDrawable(R.styleable.PopupWindow_popupBackground);
+    mElevation=a.getDimension(R.styleable.PopupWindow_popupElevation,0);
+    mOverlapAnchor=a.getBoolean(R.styleable.PopupWindow_overlapAnchor,false);
+    if (a.hasValueOrEmpty(R.styleable.PopupWindow_popupAnimationStyle)) {
+      final int animStyle=a.getResourceId(R.styleable.PopupWindow_popupAnimationStyle,0);
+      if (animStyle == R.style.Animation_PopupWindow) {
+        mAnimationStyle=ANIMATION_STYLE_DEFAULT;
+      }
+ else {
+        mAnimationStyle=animStyle;
+      }
+    }
+ else {
+      mAnimationStyle=ANIMATION_STYLE_DEFAULT;
+    }
+    final Transition enterTransition=getTransition(a.getResourceId(R.styleable.PopupWindow_popupEnterTransition,0));
+    final Transition exitTransition;
+    if (a.hasValueOrEmpty(R.styleable.PopupWindow_popupExitTransition)) {
+      exitTransition=getTransition(a.getResourceId(R.styleable.PopupWindow_popupExitTransition,0));
+    }
+ else {
+      exitTransition=enterTransition == null ? null : enterTransition.clone();
+    }
+    a.recycle();
+    setEnterTransition(enterTransition);
+    setExitTransition(exitTransition);
+    setBackgroundDrawable(bg);
+  }
+  public PopupWindow(){
+    this(null,0,0);
+  }
+  public PopupWindow(  View contentView){
+    this(contentView,0,0);
+  }
+  public PopupWindow(  int width,  int height){
+    this(null,width,height);
+  }
+  public PopupWindow(  View contentView,  int width,  int height){
+    this(contentView,width,height,false);
+  }
+  public PopupWindow(  View contentView,  int width,  int height,  boolean focusable){
+    if (contentView != null) {
+      mContext=contentView.getContext();
+      mWindowManager=(WindowManager)mContext.getSystemService(Context.WINDOW_SERVICE);
+    }
+    setContentView(contentView);
+    setWidth(width);
+    setHeight(height);
+    setFocusable(focusable);
+  }
+  public void setEnterTransition(  @Nullable Transition enterTransition){
+    mEnterTransition=enterTransition;
+  }
+  @Nullable public Transition getEnterTransition(){
+    return mEnterTransition;
+  }
+  public void setExitTransition(  @Nullable Transition exitTransition){
+    mExitTransition=exitTransition;
+  }
+  @Nullable public Transition getExitTransition(){
+    return mExitTransition;
+  }
+  public void setEpicenterBounds(  Rect bounds){
+    mEpicenterBounds=bounds;
+  }
+  private Transition getTransition(  int resId){
+    if (resId != 0 && resId != R.transition.no_transition) {
+      final TransitionInflater inflater=TransitionInflater.from(mContext);
+      final Transition transition=inflater.inflateTransition(resId);
+      if (transition != null) {
+        final boolean isEmpty=transition instanceof TransitionSet && ((TransitionSet)transition).getTransitionCount() == 0;
+        if (!isEmpty) {
+          return transition;
+        }
+      }
+    }
+    return null;
+  }
+  public Drawable getBackground(){
+    return mBackground;
+  }
+  public void setBackgroundDrawable(  Drawable background){
+    mBackground=background;
+    if (mBackground instanceof StateListDrawable) {
+      StateListDrawable stateList=(StateListDrawable)mBackground;
+      int aboveAnchorStateIndex=stateList.getStateDrawableIndex(ABOVE_ANCHOR_STATE_SET);
+      int count=stateList.getStateCount();
+      int belowAnchorStateIndex=-1;
+      for (int i=0; i < count; i++) {
+        if (i != aboveAnchorStateIndex) {
+          belowAnchorStateIndex=i;
+          break;
+        }
+      }
+      if (aboveAnchorStateIndex != -1 && belowAnchorStateIndex != -1) {
+        mAboveAnchorBackgroundDrawable=stateList.getStateDrawable(aboveAnchorStateIndex);
+        mBelowAnchorBackgroundDrawable=stateList.getStateDrawable(belowAnchorStateIndex);
+      }
+ else {
+        mBelowAnchorBackgroundDrawable=null;
+        mAboveAnchorBackgroundDrawable=null;
+      }
+    }
+  }
+  public float getElevation(){
+    return mElevation;
+  }
+  public void setElevation(  float elevation){
+    mElevation=elevation;
+  }
+  public int getAnimationStyle(){
+    return mAnimationStyle;
+  }
+  public void setIgnoreCheekPress(){
+    mIgnoreCheekPress=true;
+  }
+  public void setAnimationStyle(  int animationStyle){
+    mAnimationStyle=animationStyle;
+  }
+  public View getContentView(){
+    return mContentView;
+  }
+  public void setContentView(  View contentView){
+    if (isShowing()) {
+      return;
+    }
+    mContentView=contentView;
+    if (mContext == null && mContentView != null) {
+      mContext=mContentView.getContext();
+    }
+    if (mWindowManager == null && mContentView != null) {
+      mWindowManager=(WindowManager)mContext.getSystemService(Context.WINDOW_SERVICE);
+    }
+    if (mContext != null && !mAttachedInDecorSet) {
+      setAttachedInDecor(mContext.getApplicationInfo().targetSdkVersion >= Build.VERSION_CODES.LOLLIPOP_MR1);
+    }
+  }
+  public void setTouchInterceptor(  OnTouchListener l){
+    mTouchInterceptor=l;
+  }
+  public boolean isFocusable(){
+    return mFocusable;
+  }
+  public void setFocusable(  boolean focusable){
+    mFocusable=focusable;
+  }
+  public int getInputMethodMode(){
+    return mInputMethodMode;
+  }
+  public void setInputMethodMode(  int mode){
+    mInputMethodMode=mode;
+  }
+  public void setSoftInputMode(  @SoftInputModeFlags int mode){
+    mSoftInputMode=mode;
+  }
+  @SoftInputModeFlags public int getSoftInputMode(){
+    return mSoftInputMode;
+  }
+  public boolean isTouchable(){
+    return mTouchable;
+  }
+  public void setTouchable(  boolean touchable){
+    mTouchable=touchable;
+  }
+  public boolean isOutsideTouchable(){
+    return mOutsideTouchable;
+  }
+  public void setOutsideTouchable(  boolean touchable){
+    mOutsideTouchable=touchable;
+  }
+  public boolean isClippingEnabled(){
+    return mClippingEnabled;
+  }
+  public void setClippingEnabled(  boolean enabled){
+    mClippingEnabled=enabled;
+  }
+  public void setClipToScreenEnabled(  boolean enabled){
+    mClipToScreen=enabled;
+  }
+  void setAllowScrollingAnchorParent(  boolean enabled){
+    mAllowScrollingAnchorParent=enabled;
+  }
+  protected final boolean getAllowScrollingAnchorParent(){
+    return mAllowScrollingAnchorParent;
+  }
+  public boolean isSplitTouchEnabled(){
+    if (mSplitTouchEnabled < 0 && mContext != null) {
+      return mContext.getApplicationInfo().targetSdkVersion >= Build.VERSION_CODES.HONEYCOMB;
+    }
+    return mSplitTouchEnabled == 1;
+  }
+  public void setSplitTouchEnabled(  boolean enabled){
+    mSplitTouchEnabled=enabled ? 1 : 0;
+  }
+  public boolean isLayoutInScreenEnabled(){
+    return mLayoutInScreen;
+  }
+  public void setLayoutInScreenEnabled(  boolean enabled){
+    mLayoutInScreen=enabled;
+  }
+  public boolean isAttachedInDecor(){
+    return mAttachedInDecor;
+  }
+  public void setAttachedInDecor(  boolean enabled){
+    mAttachedInDecor=enabled;
+    mAttachedInDecorSet=true;
+  }
+  public void setLayoutInsetDecor(  boolean enabled){
+    mLayoutInsetDecor=enabled;
+  }
+  protected final boolean isLayoutInsetDecor(){
+    return mLayoutInsetDecor;
+  }
+  public void setWindowLayoutType(  int layoutType){
+    mWindowLayoutType=layoutType;
+  }
+  public int getWindowLayoutType(){
+    return mWindowLayoutType;
+  }
+  public void setTouchModal(  boolean touchModal){
+    mNotTouchModal=!touchModal;
+  }
+  @Deprecated public void setWindowLayoutMode(  int widthSpec,  int heightSpec){
+    mWidthMode=widthSpec;
+    mHeightMode=heightSpec;
+  }
+  public int getHeight(){
+    return mHeight;
+  }
+  public void setHeight(  int height){
+    mHeight=height;
+  }
+  public int getWidth(){
+    return mWidth;
+  }
+  public void setWidth(  int width){
+    mWidth=width;
+  }
+  public void setOverlapAnchor(  boolean overlapAnchor){
+    mOverlapAnchor=overlapAnchor;
+  }
+  public boolean getOverlapAnchor(){
+    return mOverlapAnchor;
+  }
+  public boolean isShowing(){
+    return mIsShowing;
+  }
+  protected final void setShowing(  boolean isShowing){
+    mIsShowing=isShowing;
+  }
+  protected final void setDropDown(  boolean isDropDown){
+    mIsDropdown=isDropDown;
+  }
+  protected final void setTransitioningToDismiss(  boolean transitioningToDismiss){
+    mIsTransitioningToDismiss=transitioningToDismiss;
+  }
+  protected final boolean isTransitioningToDismiss(){
+    return mIsTransitioningToDismiss;
+  }
+  public void showAtLocation(  View parent,  int gravity,  int x,  int y){
+    mParentRootView=new WeakReference<>(parent.getRootView());
+    showAtLocation(parent.getWindowToken(),gravity,x,y);
+  }
+  public void showAtLocation(  IBinder token,  int gravity,  int x,  int y){
+    if (isShowing() || mContentView == null) {
+      return;
+    }
+    TransitionManager.endTransitions(mDecorView);
+    detachFromAnchor();
+    mIsShowing=true;
+    mIsDropdown=false;
+    mGravity=gravity;
+    final WindowManager.LayoutParams p=createPopupLayoutParams(token);
+    preparePopup(p);
+    p.x=x;
+    p.y=y;
+    invokePopup(p);
+  }
+  public void showAsDropDown(  View anchor){
+    showAsDropDown(anchor,0,0);
+  }
+  public void showAsDropDown(  View anchor,  int xoff,  int yoff){
+    showAsDropDown(anchor,xoff,yoff,DEFAULT_ANCHORED_GRAVITY);
+  }
+  public void showAsDropDown(  View anchor,  int xoff,  int yoff,  int gravity){
+    if (isShowing() || !hasContentView()) {
+      return;
+    }
+    TransitionManager.endTransitions(mDecorView);
+    attachToAnchor(anchor,xoff,yoff,gravity);
+    mIsShowing=true;
+    mIsDropdown=true;
+    final WindowManager.LayoutParams p=createPopupLayoutParams(anchor.getApplicationWindowToken());
+    preparePopup(p);
+    final boolean aboveAnchor=findDropDownPosition(anchor,p,xoff,yoff,p.width,p.height,gravity,mAllowScrollingAnchorParent);
+    updateAboveAnchor(aboveAnchor);
+    p.accessibilityIdOfAnchor=(anchor != null) ? anchor.getAccessibilityViewId() : -1;
+    invokePopup(p);
+  }
+  protected final void updateAboveAnchor(  boolean aboveAnchor){
+    if (aboveAnchor != mAboveAnchor) {
+      mAboveAnchor=aboveAnchor;
+      if (mBackground != null && mBackgroundView != null) {
+        if (mAboveAnchorBackgroundDrawable != null) {
+          if (mAboveAnchor) {
+            mBackgroundView.setBackground(mAboveAnchorBackgroundDrawable);
+          }
+ else {
+            mBackgroundView.setBackground(mBelowAnchorBackgroundDrawable);
+          }
+        }
+ else {
+          mBackgroundView.refreshDrawableState();
+        }
+      }
+    }
+  }
+  public boolean isAboveAnchor(){
+    return mAboveAnchor;
+  }
+  private void preparePopup(  WindowManager.LayoutParams p){
+    if (mContentView == null || mContext == null || mWindowManager == null) {
+      throw new IllegalStateException("You must specify a valid content view by " + "calling setContentView() before attempting to show the popup.");
+    }
+    if (p.accessibilityTitle == null) {
+      p.accessibilityTitle=mContext.getString(R.string.popup_window_default_title);
+    }
+    if (mDecorView != null) {
+      mDecorView.cancelTransitions();
+    }
+    if (mBackground != null) {
+      mBackgroundView=createBackgroundView(mContentView);
+      mBackgroundView.setBackground(mBackground);
+    }
+ else {
+      mBackgroundView=mContentView;
+    }
+    mDecorView=createDecorView(mBackgroundView);
+    mBackgroundView.setElevation(mElevation);
+    p.setSurfaceInsets(mBackgroundView,true,true);
+    mPopupViewInitialLayoutDirectionInherited=(mContentView.getRawLayoutDirection() == View.LAYOUT_DIRECTION_INHERIT);
+  }
+  private PopupBackgroundView createBackgroundView(  View contentView){
+    final ViewGroup.LayoutParams layoutParams=mContentView.getLayoutParams();
+    final int height;
+    if (layoutParams != null && layoutParams.height == WRAP_CONTENT) {
+      height=WRAP_CONTENT;
+    }
+ else {
+      height=MATCH_PARENT;
+    }
+    final PopupBackgroundView backgroundView=new PopupBackgroundView(mContext);
+    final PopupBackgroundView.LayoutParams listParams=new PopupBackgroundView.LayoutParams(MATCH_PARENT,height);
+    backgroundView.addView(contentView,listParams);
+    return backgroundView;
+  }
+  private PopupDecorView createDecorView(  View contentView){
+    final ViewGroup.LayoutParams layoutParams=mContentView.getLayoutParams();
+    final int height;
+    if (layoutParams != null && layoutParams.height == WRAP_CONTENT) {
+      height=WRAP_CONTENT;
+    }
+ else {
+      height=MATCH_PARENT;
+    }
+    final PopupDecorView decorView=new PopupDecorView(mContext);
+    decorView.addView(contentView,MATCH_PARENT,height);
+    decorView.setClipChildren(false);
+    decorView.setClipToPadding(false);
+    return decorView;
+  }
+  private void invokePopup(  WindowManager.LayoutParams p){
+    if (mContext != null) {
+      p.packageName=mContext.getPackageName();
+    }
+    final PopupDecorView decorView=mDecorView;
+    decorView.setFitsSystemWindows(mLayoutInsetDecor);
+    setLayoutDirectionFromAnchor();
+    mWindowManager.addView(decorView,p);
+    if (mEnterTransition != null) {
+      decorView.requestEnterTransition(mEnterTransition);
+    }
+  }
+  private void setLayoutDirectionFromAnchor(){
+    if (mAnchor != null) {
+      View anchor=mAnchor.get();
+      if (anchor != null && mPopupViewInitialLayoutDirectionInherited) {
+        mDecorView.setLayoutDirection(anchor.getLayoutDirection());
+      }
+    }
+  }
+  private int computeGravity(){
+    int gravity=mGravity == Gravity.NO_GRAVITY ? Gravity.START | Gravity.TOP : mGravity;
+    if (mIsDropdown && (mClipToScreen || mClippingEnabled)) {
+      gravity|=Gravity.DISPLAY_CLIP_VERTICAL;
+    }
+    return gravity;
+  }
+  protected final WindowManager.LayoutParams createPopupLayoutParams(  IBinder token){
+    final WindowManager.LayoutParams p=new WindowManager.LayoutParams();
+    p.gravity=computeGravity();
+    p.flags=computeFlags(p.flags);
+    p.type=mWindowLayoutType;
+    p.token=token;
+    p.softInputMode=mSoftInputMode;
+    p.windowAnimations=computeAnimationResource();
+    if (mBackground != null) {
+      p.format=mBackground.getOpacity();
+    }
+ else {
+      p.format=PixelFormat.TRANSLUCENT;
+    }
+    if (mHeightMode < 0) {
+      p.height=mLastHeight=mHeightMode;
+    }
+ else {
+      p.height=mLastHeight=mHeight;
+    }
+    if (mWidthMode < 0) {
+      p.width=mLastWidth=mWidthMode;
+    }
+ else {
+      p.width=mLastWidth=mWidth;
+    }
+    p.privateFlags=PRIVATE_FLAG_WILL_NOT_REPLACE_ON_RELAUNCH | PRIVATE_FLAG_LAYOUT_CHILD_WINDOW_IN_PARENT_FRAME;
+    p.setTitle("PopupWindow:" + Integer.toHexString(hashCode()));
+    return p;
+  }
+  private int computeFlags(  int curFlags){
+    curFlags&=~(WindowManager.LayoutParams.FLAG_IGNORE_CHEEK_PRESSES | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE| WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH| WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS| WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM| WindowManager.LayoutParams.FLAG_SPLIT_TOUCH);
+    if (mIgnoreCheekPress) {
+      curFlags|=WindowManager.LayoutParams.FLAG_IGNORE_CHEEK_PRESSES;
+    }
+    if (!mFocusable) {
+      curFlags|=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+      if (mInputMethodMode == INPUT_METHOD_NEEDED) {
+        curFlags|=WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
+      }
+    }
+ else     if (mInputMethodMode == INPUT_METHOD_NOT_NEEDED) {
+      curFlags|=WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
+    }
+    if (!mTouchable) {
+      curFlags|=WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+    }
+    if (mOutsideTouchable) {
+      curFlags|=WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH;
+    }
+    if (!mClippingEnabled || mClipToScreen) {
+      curFlags|=WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS;
+    }
+    if (isSplitTouchEnabled()) {
+      curFlags|=WindowManager.LayoutParams.FLAG_SPLIT_TOUCH;
+    }
+    if (mLayoutInScreen) {
+      curFlags|=WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
+    }
+    if (mLayoutInsetDecor) {
+      curFlags|=WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR;
+    }
+    if (mNotTouchModal) {
+      curFlags|=WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
+    }
+    if (mAttachedInDecor) {
+      curFlags|=WindowManager.LayoutParams.FLAG_LAYOUT_ATTACHED_IN_DECOR;
+    }
+    return curFlags;
+  }
+  private int computeAnimationResource(){
+    if (mAnimationStyle == ANIMATION_STYLE_DEFAULT) {
+      if (mIsDropdown) {
+        return mAboveAnchor ? com.android.internal.R.style.Animation_DropDownUp : com.android.internal.R.style.Animation_DropDownDown;
+      }
+      return 0;
+    }
+    return mAnimationStyle;
+  }
+  protected final boolean findDropDownPosition(  View anchor,  WindowManager.LayoutParams outParams,  int xOffset,  int yOffset,  int width,  int height,  int gravity,  boolean allowScroll){
+    final int anchorHeight=anchor.getHeight();
+    final int anchorWidth=anchor.getWidth();
+    if (mOverlapAnchor) {
+      yOffset-=anchorHeight;
+    }
+    final int[] appScreenLocation=mTmpAppLocation;
+    final View appRootView=getAppRootView(anchor);
+    appRootView.getLocationOnScreen(appScreenLocation);
+    final int[] screenLocation=mTmpScreenLocation;
+    anchor.getLocationOnScreen(screenLocation);
+    final int[] drawingLocation=mTmpDrawingLocation;
+    drawingLocation[0]=screenLocation[0] - appScreenLocation[0];
+    drawingLocation[1]=screenLocation[1] - appScreenLocation[1];
+    outParams.x=drawingLocation[0] + xOffset;
+    outParams.y=drawingLocation[1] + anchorHeight + yOffset;
+    final Rect displayFrame=new Rect();
+    appRootView.getWindowVisibleDisplayFrame(displayFrame);
+    if (width == MATCH_PARENT) {
+      width=displayFrame.right - displayFrame.left;
+    }
+    if (height == MATCH_PARENT) {
+      height=displayFrame.bottom - displayFrame.top;
+    }
+    outParams.gravity=computeGravity();
+    outParams.width=width;
+    outParams.height=height;
+    final int hgrav=Gravity.getAbsoluteGravity(gravity,anchor.getLayoutDirection()) & Gravity.HORIZONTAL_GRAVITY_MASK;
+    if (hgrav == Gravity.RIGHT) {
+      outParams.x-=width - anchorWidth;
+    }
+    final boolean fitsVertical=tryFitVertical(outParams,yOffset,height,anchorHeight,drawingLocation[1],screenLocation[1],displayFrame.top,displayFrame.bottom,false);
+    final boolean fitsHorizontal=tryFitHorizontal(outParams,xOffset,width,anchorWidth,drawingLocation[0],screenLocation[0],displayFrame.left,displayFrame.right,false);
+    if (!fitsVertical || !fitsHorizontal) {
+      final int scrollX=anchor.getScrollX();
+      final int scrollY=anchor.getScrollY();
+      final Rect r=new Rect(scrollX,scrollY,scrollX + width + xOffset,scrollY + height + anchorHeight+ yOffset);
+      if (allowScroll && anchor.requestRectangleOnScreen(r,true)) {
+        anchor.getLocationOnScreen(screenLocation);
+        drawingLocation[0]=screenLocation[0] - appScreenLocation[0];
+        drawingLocation[1]=screenLocation[1] - appScreenLocation[1];
+        outParams.x=drawingLocation[0] + xOffset;
+        outParams.y=drawingLocation[1] + anchorHeight + yOffset;
+        if (hgrav == Gravity.RIGHT) {
+          outParams.x-=width - anchorWidth;
+        }
+      }
+      tryFitVertical(outParams,yOffset,height,anchorHeight,drawingLocation[1],screenLocation[1],displayFrame.top,displayFrame.bottom,mClipToScreen);
+      tryFitHorizontal(outParams,xOffset,width,anchorWidth,drawingLocation[0],screenLocation[0],displayFrame.left,displayFrame.right,mClipToScreen);
+    }
+    return outParams.y < drawingLocation[1];
+  }
+  private boolean tryFitVertical(  @NonNull LayoutParams outParams,  int yOffset,  int height,  int anchorHeight,  int drawingLocationY,  int screenLocationY,  int displayFrameTop,  int displayFrameBottom,  boolean allowResize){
+    final int winOffsetY=screenLocationY - drawingLocationY;
+    final int anchorTopInScreen=outParams.y + winOffsetY;
+    final int spaceBelow=displayFrameBottom - anchorTopInScreen;
+    if (anchorTopInScreen >= 0 && height <= spaceBelow) {
+      return true;
+    }
+    final int spaceAbove=anchorTopInScreen - anchorHeight - displayFrameTop;
+    if (height <= spaceAbove) {
+      if (mOverlapAnchor) {
+        yOffset+=anchorHeight;
+      }
+      outParams.y=drawingLocationY - height + yOffset;
+      return true;
+    }
+    if (positionInDisplayVertical(outParams,height,drawingLocationY,screenLocationY,displayFrameTop,displayFrameBottom,allowResize)) {
+      return true;
+    }
+    return false;
+  }
+  private boolean positionInDisplayVertical(  @NonNull LayoutParams outParams,  int height,  int drawingLocationY,  int screenLocationY,  int displayFrameTop,  int displayFrameBottom,  boolean canResize){
+    boolean fitsInDisplay=true;
+    final int winOffsetY=screenLocationY - drawingLocationY;
+    outParams.y+=winOffsetY;
+    outParams.height=height;
+    final int bottom=outParams.y + height;
+    if (bottom > displayFrameBottom) {
+      outParams.y-=bottom - displayFrameBottom;
+    }
+    if (outParams.y < displayFrameTop) {
+      outParams.y=displayFrameTop;
+      final int displayFrameHeight=displayFrameBottom - displayFrameTop;
+      if (canResize && height > displayFrameHeight) {
+        outParams.height=displayFrameHeight;
+      }
+ else {
+        fitsInDisplay=false;
+      }
+    }
+    outParams.y-=winOffsetY;
+    return fitsInDisplay;
+  }
+  private boolean tryFitHorizontal(  @NonNull LayoutParams outParams,  int xOffset,  int width,  int anchorWidth,  int drawingLocationX,  int screenLocationX,  int displayFrameLeft,  int displayFrameRight,  boolean allowResize){
+    final int winOffsetX=screenLocationX - drawingLocationX;
+    final int anchorLeftInScreen=outParams.x + winOffsetX;
+    final int spaceRight=displayFrameRight - anchorLeftInScreen;
+    if (anchorLeftInScreen >= 0 && width <= spaceRight) {
+      return true;
+    }
+    if (positionInDisplayHorizontal(outParams,width,drawingLocationX,screenLocationX,displayFrameLeft,displayFrameRight,allowResize)) {
+      return true;
+    }
+    return false;
+  }
+  private boolean positionInDisplayHorizontal(  @NonNull LayoutParams outParams,  int width,  int drawingLocationX,  int screenLocationX,  int displayFrameLeft,  int displayFrameRight,  boolean canResize){
+    boolean fitsInDisplay=true;
+    final int winOffsetX=screenLocationX - drawingLocationX;
+    outParams.x+=winOffsetX;
+    final int right=outParams.x + width;
+    if (right > displayFrameRight) {
+      outParams.x-=right - displayFrameRight;
+    }
+    if (outParams.x < displayFrameLeft) {
+      outParams.x=displayFrameLeft;
+      final int displayFrameWidth=displayFrameRight - displayFrameLeft;
+      if (canResize && width > displayFrameWidth) {
+        outParams.width=displayFrameWidth;
+      }
+ else {
+        fitsInDisplay=false;
+      }
+    }
+    outParams.x-=winOffsetX;
+    return fitsInDisplay;
+  }
+  public int getMaxAvailableHeight(  @NonNull View anchor){
+    return getMaxAvailableHeight(anchor,0);
+  }
+  public int getMaxAvailableHeight(  @NonNull View anchor,  int yOffset){
+    return getMaxAvailableHeight(anchor,yOffset,false);
+  }
+  public int getMaxAvailableHeight(  @NonNull View anchor,  int yOffset,  boolean ignoreBottomDecorations){
+    Rect displayFrame=null;
+    final Rect visibleDisplayFrame=new Rect();
+    final View appView=getAppRootView(anchor);
+    appView.getWindowVisibleDisplayFrame(visibleDisplayFrame);
+    if (ignoreBottomDecorations) {
+      displayFrame=new Rect();
+      anchor.getWindowDisplayFrame(displayFrame);
+      displayFrame.top=visibleDisplayFrame.top;
+      displayFrame.right=visibleDisplayFrame.right;
+      displayFrame.left=visibleDisplayFrame.left;
+    }
+ else {
+      displayFrame=visibleDisplayFrame;
+    }
+    final int[] anchorPos=mTmpDrawingLocation;
+    anchor.getLocationOnScreen(anchorPos);
+    final int bottomEdge=displayFrame.bottom;
+    final int distanceToBottom;
+    if (mOverlapAnchor) {
+      distanceToBottom=bottomEdge - anchorPos[1] - yOffset;
+    }
+ else {
+      distanceToBottom=bottomEdge - (anchorPos[1] + anchor.getHeight()) - yOffset;
+    }
+    final int distanceToTop=anchorPos[1] - displayFrame.top + yOffset;
+    int returnedHeight=Math.max(distanceToBottom,distanceToTop);
+    if (mBackground != null) {
+      mBackground.getPadding(mTempRect);
+      returnedHeight-=mTempRect.top + mTempRect.bottom;
+    }
+    return returnedHeight;
+  }
+  public void dismiss(){
+    if (!isShowing() || isTransitioningToDismiss()) {
+      return;
+    }
+    final PopupDecorView decorView=mDecorView;
+    final View contentView=mContentView;
+    final ViewGroup contentHolder;
+    final ViewParent contentParent=contentView.getParent();
+    if (contentParent instanceof ViewGroup) {
+      contentHolder=((ViewGroup)contentParent);
+    }
+ else {
+      contentHolder=null;
+    }
+    decorView.cancelTransitions();
+    mIsShowing=false;
+    mIsTransitioningToDismiss=true;
+    final Transition exitTransition=mExitTransition;
+    if (exitTransition != null && decorView.isLaidOut() && (mIsAnchorRootAttached || mAnchorRoot == null)) {
+      final LayoutParams p=(LayoutParams)decorView.getLayoutParams();
+      p.flags|=LayoutParams.FLAG_NOT_TOUCHABLE;
+      p.flags|=LayoutParams.FLAG_NOT_FOCUSABLE;
+      p.flags&=~LayoutParams.FLAG_ALT_FOCUSABLE_IM;
+      mWindowManager.updateViewLayout(decorView,p);
+      final View anchorRoot=mAnchorRoot != null ? mAnchorRoot.get() : null;
+      final Rect epicenter=getTransitionEpicenter();
+      decorView.startExitTransition(exitTransition,anchorRoot,epicenter,new TransitionListenerAdapter(){
+        @Override public void onTransitionEnd(        Transition transition){
+          dismissImmediate(decorView,contentHolder,contentView);
+        }
+      }
+);
+    }
+ else {
+      dismissImmediate(decorView,contentHolder,contentView);
+    }
+    detachFromAnchor();
+    if (mOnDismissListener != null) {
+      mOnDismissListener.onDismiss();
+    }
+  }
+  protected final Rect getTransitionEpicenter(){
+    final View anchor=mAnchor != null ? mAnchor.get() : null;
+    final View decor=mDecorView;
+    if (anchor == null || decor == null) {
+      return null;
+    }
+    final int[] anchorLocation=anchor.getLocationOnScreen();
+    final int[] popupLocation=mDecorView.getLocationOnScreen();
+    final Rect bounds=new Rect(0,0,anchor.getWidth(),anchor.getHeight());
+    bounds.offset(anchorLocation[0] - popupLocation[0],anchorLocation[1] - popupLocation[1]);
+    if (mEpicenterBounds != null) {
+      final int offsetX=bounds.left;
+      final int offsetY=bounds.top;
+      bounds.set(mEpicenterBounds);
+      bounds.offset(offsetX,offsetY);
+    }
+    return bounds;
+  }
+  private void dismissImmediate(  View decorView,  ViewGroup contentHolder,  View contentView){
+    if (decorView.getParent() != null) {
+      mWindowManager.removeViewImmediate(decorView);
+    }
+    if (contentHolder != null) {
+      contentHolder.removeView(contentView);
+    }
+    mDecorView=null;
+    mBackgroundView=null;
+    mIsTransitioningToDismiss=false;
+  }
+  public void setOnDismissListener(  OnDismissListener onDismissListener){
+    mOnDismissListener=onDismissListener;
+  }
+  protected final OnDismissListener getOnDismissListener(){
+    return mOnDismissListener;
+  }
+  public void update(){
+    if (!isShowing() || !hasContentView()) {
+      return;
+    }
+    final WindowManager.LayoutParams p=getDecorViewLayoutParams();
+    boolean update=false;
+    final int newAnim=computeAnimationResource();
+    if (newAnim != p.windowAnimations) {
+      p.windowAnimations=newAnim;
+      update=true;
+    }
+    final int newFlags=computeFlags(p.flags);
+    if (newFlags != p.flags) {
+      p.flags=newFlags;
+      update=true;
+    }
+    final int newGravity=computeGravity();
+    if (newGravity != p.gravity) {
+      p.gravity=newGravity;
+      update=true;
+    }
+    if (update) {
+      update(mAnchor != null ? mAnchor.get() : null,p);
+    }
+  }
+  protected void update(  View anchor,  WindowManager.LayoutParams params){
+    setLayoutDirectionFromAnchor();
+    mWindowManager.updateViewLayout(mDecorView,params);
+  }
+  public void update(  int width,  int height){
+    final WindowManager.LayoutParams p=getDecorViewLayoutParams();
+    update(p.x,p.y,width,height,false);
+  }
+  public void update(  int x,  int y,  int width,  int height){
+    update(x,y,width,height,false);
+  }
+  public void update(  int x,  int y,  int width,  int height,  boolean force){
+    if (width >= 0) {
+      mLastWidth=width;
+      setWidth(width);
+    }
+    if (height >= 0) {
+      mLastHeight=height;
+      setHeight(height);
+    }
+    if (!isShowing() || !hasContentView()) {
+      return;
+    }
+    final WindowManager.LayoutParams p=getDecorViewLayoutParams();
+    boolean update=force;
+    final int finalWidth=mWidthMode < 0 ? mWidthMode : mLastWidth;
+    if (width != -1 && p.width != finalWidth) {
+      p.width=mLastWidth=finalWidth;
+      update=true;
+    }
+    final int finalHeight=mHeightMode < 0 ? mHeightMode : mLastHeight;
+    if (height != -1 && p.height != finalHeight) {
+      p.height=mLastHeight=finalHeight;
+      update=true;
+    }
+    if (p.x != x) {
+      p.x=x;
+      update=true;
+    }
+    if (p.y != y) {
+      p.y=y;
+      update=true;
+    }
+    final int newAnim=computeAnimationResource();
+    if (newAnim != p.windowAnimations) {
+      p.windowAnimations=newAnim;
+      update=true;
+    }
+    final int newFlags=computeFlags(p.flags);
+    if (newFlags != p.flags) {
+      p.flags=newFlags;
+      update=true;
+    }
+    final int newGravity=computeGravity();
+    if (newGravity != p.gravity) {
+      p.gravity=newGravity;
+      update=true;
+    }
+    View anchor=null;
+    int newAccessibilityIdOfAnchor=-1;
+    if (mAnchor != null && mAnchor.get() != null) {
+      anchor=mAnchor.get();
+      newAccessibilityIdOfAnchor=anchor.getAccessibilityViewId();
+    }
+    if (newAccessibilityIdOfAnchor != p.accessibilityIdOfAnchor) {
+      p.accessibilityIdOfAnchor=newAccessibilityIdOfAnchor;
+      update=true;
+    }
+    if (update) {
+      update(anchor,p);
+    }
+  }
+  protected boolean hasContentView(){
+    return mContentView != null;
+  }
+  protected boolean hasDecorView(){
+    return mDecorView != null;
+  }
+  protected WindowManager.LayoutParams getDecorViewLayoutParams(){
+    return (WindowManager.LayoutParams)mDecorView.getLayoutParams();
+  }
+  public void update(  View anchor,  int width,  int height){
+    update(anchor,false,0,0,width,height);
+  }
+  public void update(  View anchor,  int xoff,  int yoff,  int width,  int height){
+    update(anchor,true,xoff,yoff,width,height);
+  }
+  private void update(  View anchor,  boolean updateLocation,  int xoff,  int yoff,  int width,  int height){
+    if (!isShowing() || !hasContentView()) {
+      return;
+    }
+    final WeakReference<View> oldAnchor=mAnchor;
+    final int gravity=mAnchoredGravity;
+    final boolean needsUpdate=updateLocation && (mAnchorXoff != xoff || mAnchorYoff != yoff);
+    if (oldAnchor == null || oldAnchor.get() != anchor || (needsUpdate && !mIsDropdown)) {
+      attachToAnchor(anchor,xoff,yoff,gravity);
+    }
+ else     if (needsUpdate) {
+      mAnchorXoff=xoff;
+      mAnchorYoff=yoff;
+    }
+    final WindowManager.LayoutParams p=getDecorViewLayoutParams();
+    final int oldGravity=p.gravity;
+    final int oldWidth=p.width;
+    final int oldHeight=p.height;
+    final int oldX=p.x;
+    final int oldY=p.y;
+    if (width < 0) {
+      width=mWidth;
+    }
+    if (height < 0) {
+      height=mHeight;
+    }
+    final boolean aboveAnchor=findDropDownPosition(anchor,p,mAnchorXoff,mAnchorYoff,width,height,gravity,mAllowScrollingAnchorParent);
+    updateAboveAnchor(aboveAnchor);
+    final boolean paramsChanged=oldGravity != p.gravity || oldX != p.x || oldY != p.y || oldWidth != p.width || oldHeight != p.height;
+    final int newWidth=width < 0 ? width : p.width;
+    final int newHeight=height < 0 ? height : p.height;
+    update(p.x,p.y,newWidth,newHeight,paramsChanged);
+  }
+public interface OnDismissListener {
+    public void onDismiss();
+  }
+  protected void detachFromAnchor(){
+    final View anchor=getAnchor();
+    if (anchor != null) {
+      final ViewTreeObserver vto=anchor.getViewTreeObserver();
+      vto.removeOnScrollChangedListener(mOnScrollChangedListener);
+      anchor.removeOnAttachStateChangeListener(mOnAnchorDetachedListener);
+    }
+    final View anchorRoot=mAnchorRoot != null ? mAnchorRoot.get() : null;
+    if (anchorRoot != null) {
+      anchorRoot.removeOnAttachStateChangeListener(mOnAnchorRootDetachedListener);
+      anchorRoot.removeOnLayoutChangeListener(mOnLayoutChangeListener);
+    }
+    mAnchor=null;
+    mAnchorRoot=null;
+    mIsAnchorRootAttached=false;
+  }
+  protected void attachToAnchor(  View anchor,  int xoff,  int yoff,  int gravity){
+    detachFromAnchor();
+    final ViewTreeObserver vto=anchor.getViewTreeObserver();
+    if (vto != null) {
+      vto.addOnScrollChangedListener(mOnScrollChangedListener);
+    }
+    anchor.addOnAttachStateChangeListener(mOnAnchorDetachedListener);
+    final View anchorRoot=anchor.getRootView();
+    anchorRoot.addOnAttachStateChangeListener(mOnAnchorRootDetachedListener);
+    anchorRoot.addOnLayoutChangeListener(mOnLayoutChangeListener);
+    mAnchor=new WeakReference<>(anchor);
+    mAnchorRoot=new WeakReference<>(anchorRoot);
+    mIsAnchorRootAttached=anchorRoot.isAttachedToWindow();
+    mParentRootView=mAnchorRoot;
+    mAnchorXoff=xoff;
+    mAnchorYoff=yoff;
+    mAnchoredGravity=gravity;
+  }
+  protected @Nullable View getAnchor(){
+    return mAnchor != null ? mAnchor.get() : null;
+  }
+  private void alignToAnchor(){
+    final View anchor=mAnchor != null ? mAnchor.get() : null;
+    if (anchor != null && anchor.isAttachedToWindow() && hasDecorView()) {
+      final WindowManager.LayoutParams p=getDecorViewLayoutParams();
+      updateAboveAnchor(findDropDownPosition(anchor,p,mAnchorXoff,mAnchorYoff,p.width,p.height,mAnchoredGravity,false));
+      update(p.x,p.y,-1,-1,true);
+    }
+  }
+  private View getAppRootView(  View anchor){
+    final View appWindowView=WindowManagerGlobal.getInstance().getWindowView(anchor.getApplicationWindowToken());
+    if (appWindowView != null) {
+      return appWindowView;
+    }
+    return anchor.getRootView();
+  }
+private class PopupDecorView extends FrameLayout {
+    private Runnable mCleanupAfterExit;
+    public PopupDecorView(    Context context){
+      super(context);
+    }
+    @Override public boolean dispatchKeyEvent(    KeyEvent event){
+      if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+        if (getKeyDispatcherState() == null) {
+          return super.dispatchKeyEvent(event);
+        }
+        if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+          final KeyEvent.DispatcherState state=getKeyDispatcherState();
+          if (state != null) {
+            state.startTracking(event,this);
+          }
+          return true;
+        }
+ else         if (event.getAction() == KeyEvent.ACTION_UP) {
+          final KeyEvent.DispatcherState state=getKeyDispatcherState();
+          if (state != null && state.isTracking(event) && !event.isCanceled()) {
+            dismiss();
+            return true;
+          }
+        }
+        return super.dispatchKeyEvent(event);
+      }
+ else {
+        return super.dispatchKeyEvent(event);
+      }
+    }
+    @Override public boolean dispatchTouchEvent(    MotionEvent ev){
+      if (mTouchInterceptor != null && mTouchInterceptor.onTouch(this,ev)) {
+        return true;
+      }
+      return super.dispatchTouchEvent(ev);
+    }
+    @Override public boolean onTouchEvent(    MotionEvent event){
+      final int x=(int)event.getX();
+      final int y=(int)event.getY();
+      if ((event.getAction() == MotionEvent.ACTION_DOWN) && ((x < 0) || (x >= getWidth()) || (y < 0)|| (y >= getHeight()))) {
+        dismiss();
+        return true;
+      }
+ else       if (event.getAction() == MotionEvent.ACTION_OUTSIDE) {
+        dismiss();
+        return true;
+      }
+ else {
+        return super.onTouchEvent(event);
+      }
+    }
+    public void requestEnterTransition(    Transition transition){
+      final ViewTreeObserver observer=getViewTreeObserver();
+      if (observer != null && transition != null) {
+        final Transition enterTransition=transition.clone();
+        observer.addOnGlobalLayoutListener(new OnGlobalLayoutListener(){
+          @Override public void onGlobalLayout(){
+            final ViewTreeObserver observer=getViewTreeObserver();
+            if (observer != null) {
+              observer.removeOnGlobalLayoutListener(this);
+            }
+            final Rect epicenter=getTransitionEpicenter();
+            enterTransition.setEpicenterCallback(new EpicenterCallback(){
+              @Override public Rect onGetEpicenter(              Transition transition){
+                return epicenter;
+              }
+            }
+);
+            startEnterTransition(enterTransition);
+          }
+        }
+);
+      }
+    }
+    private void startEnterTransition(    Transition enterTransition){
+      final int count=getChildCount();
+      for (int i=0; i < count; i++) {
+        final View child=getChildAt(i);
+        enterTransition.addTarget(child);
+        child.setVisibility(View.INVISIBLE);
+      }
+      TransitionManager.beginDelayedTransition(this,enterTransition);
+      for (int i=0; i < count; i++) {
+        final View child=getChildAt(i);
+        child.setVisibility(View.VISIBLE);
+      }
+    }
+    public void startExitTransition(    @NonNull Transition transition,    @Nullable final View anchorRoot,    @Nullable final Rect epicenter,    @NonNull final TransitionListener listener){
+      if (transition == null) {
+        return;
+      }
+      if (anchorRoot != null) {
+        anchorRoot.addOnAttachStateChangeListener(mOnAnchorRootDetachedListener);
+      }
+      mCleanupAfterExit=null;
+      final Transition exitTransition=transition.clone();
+      exitTransition.addListener(new TransitionListenerAdapter(){
+        @Override public void onTransitionEnd(        Transition t){
+          t.removeListener(this);
+          if (mCleanupAfterExit != null) {
+            mCleanupAfterExit.run();
+          }
+        }
+      }
+);
+      exitTransition.setEpicenterCallback(new EpicenterCallback(){
+        @Override public Rect onGetEpicenter(        Transition transition){
+          return epicenter;
+        }
+      }
+);
+      final int count=getChildCount();
+      for (int i=0; i < count; i++) {
+        final View child=getChildAt(i);
+        exitTransition.addTarget(child);
+      }
+      TransitionManager.beginDelayedTransition(this,exitTransition);
+      for (int i=0; i < count; i++) {
+        final View child=getChildAt(i);
+        child.setVisibility(View.INVISIBLE);
+      }
+    }
+    public void cancelTransitions(){
+      TransitionManager.endTransitions(this);
+      if (mCleanupAfterExit != null) {
+        mCleanupAfterExit.run();
+      }
+    }
+    private final OnAttachStateChangeListener mOnAnchorRootDetachedListener=new OnAttachStateChangeListener(){
+      @Override public void onViewAttachedToWindow(      View v){
+      }
+      @Override public void onViewDetachedFromWindow(      View v){
+        v.removeOnAttachStateChangeListener(this);
+        TransitionManager.endTransitions(PopupDecorView.this);
+      }
+    }
+;
+    @Override public void requestKeyboardShortcuts(    List<KeyboardShortcutGroup> list,    int deviceId){
+      if (mParentRootView != null) {
+        View parentRoot=mParentRootView.get();
+        if (parentRoot != null) {
+          parentRoot.requestKeyboardShortcuts(list,deviceId);
+        }
+      }
+    }
+  }
+private class PopupBackgroundView extends FrameLayout {
+    public PopupBackgroundView(    Context context){
+      super(context);
+    }
+    @Override protected int[] onCreateDrawableState(    int extraSpace){
+      if (mAboveAnchor) {
+        final int[] drawableState=super.onCreateDrawableState(extraSpace + 1);
+        View.mergeDrawableStates(drawableState,ABOVE_ANCHOR_STATE_SET);
+        return drawableState;
+      }
+ else {
+        return super.onCreateDrawableState(extraSpace);
+      }
+    }
+  }
+}

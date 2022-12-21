@@ -1,0 +1,14 @@
+public static boolean isRootSystem(){
+  if (systemRootState != SYSTEM_ROOT_STATE_UNKNOW) {
+    return systemRootState == SYSTEM_ROOT_STATE_ENABLE;
+  }
+  final String suSearchPaths[]={"/system/bin/","/system/xbin/","/system/sbin/","/sbin/","/vendor/bin/"};
+  for (  String searchPath : suSearchPaths) {
+    File file=new File(searchPath,"su");
+    if (file.exists()) {
+      systemRootState=SYSTEM_ROOT_STATE_ENABLE;
+      return true;
+    }
+  }
+  return false;
+}

@@ -1,0 +1,20 @@
+public void stop(int timeout) throws InterruptedException {
+  if (!isclosed.compareAndSet(false,true)) {
+    return;
+  }
+  List<WebSocket> socketsToClose=null;
+synchronized (connections) {
+    socketsToClose=new ArrayList<WebSocket>(connections);
+  }
+  for (  WebSocket ws : socketsToClose) {
+    ws.close(CloseFrame.GOING_AWAY);
+  }
+  wsf.close();
+synchronized (this) {
+    if (selectorthread != null && selectorthread != Thread.currentThread()) {
+      selectorthread.interrupt();
+      selector.wakeup();
+      selectorthread.join(timeout);
+    }
+  }
+}

@@ -1,0 +1,92 @@
+void dumpBroadcastsLocked(FileDescriptor fd,PrintWriter pw,String[] args,int opti,boolean dumpAll,String dumpPackage){
+  boolean needSep=false;
+  boolean onlyHistory=false;
+  boolean printedAnything=false;
+  if ("history".equals(dumpPackage)) {
+    if (opti < args.length && "-s".equals(args[opti])) {
+      dumpAll=false;
+    }
+    onlyHistory=true;
+    dumpPackage=null;
+  }
+  pw.println("ACTIVITY MANAGER BROADCAST STATE (dumpsys activity broadcasts)");
+  if (!onlyHistory && dumpAll) {
+    if (mRegisteredReceivers.size() > 0) {
+      boolean printed=false;
+      Iterator it=mRegisteredReceivers.values().iterator();
+      while (it.hasNext()) {
+        ReceiverList r=(ReceiverList)it.next();
+        if (dumpPackage != null && (r.app == null || !dumpPackage.equals(r.app.info.packageName))) {
+          continue;
+        }
+        if (!printed) {
+          pw.println("  Registered Receivers:");
+          needSep=true;
+          printed=true;
+          printedAnything=true;
+        }
+        pw.print("  * ");
+        pw.println(r);
+        r.dump(pw,"    ");
+      }
+    }
+    if (mReceiverResolver.dump(pw,needSep ? "\n  Receiver Resolver Table:" : "  Receiver Resolver Table:","    ",dumpPackage,false,false)) {
+      needSep=true;
+      printedAnything=true;
+    }
+  }
+  for (  BroadcastQueue q : mBroadcastQueues) {
+    needSep=q.dumpLocked(fd,pw,args,opti,dumpAll,dumpPackage,needSep);
+    printedAnything|=needSep;
+  }
+  needSep=true;
+  if (!onlyHistory && mStickyBroadcasts != null && dumpPackage == null) {
+    for (int user=0; user < mStickyBroadcasts.size(); user++) {
+      if (needSep) {
+        pw.println();
+      }
+      needSep=true;
+      printedAnything=true;
+      pw.print("  Sticky broadcasts for user ");
+      pw.print(mStickyBroadcasts.keyAt(user));
+      pw.println(":");
+      StringBuilder sb=new StringBuilder(128);
+      for (      Map.Entry<String,ArrayList<Intent>> ent : mStickyBroadcasts.valueAt(user).entrySet()) {
+        pw.print("  * Sticky action ");
+        pw.print(ent.getKey());
+        if (dumpAll) {
+          pw.println(":");
+          ArrayList<Intent> intents=ent.getValue();
+          final int N=intents.size();
+          for (int i=0; i < N; i++) {
+            sb.setLength(0);
+            sb.append("    Intent: ");
+            intents.get(i).toShortString(sb,false,true,false,false);
+            pw.println(sb.toString());
+            Bundle bundle=intents.get(i).getExtras();
+            if (bundle != null) {
+              pw.print("      ");
+              pw.println(bundle.toString());
+            }
+          }
+        }
+ else {
+          pw.println("");
+        }
+      }
+    }
+  }
+  if (!onlyHistory && dumpAll) {
+    pw.println();
+    for (    BroadcastQueue queue : mBroadcastQueues) {
+      pw.println("  mBroadcastsScheduled [" + queue.mQueueName + "]="+ queue.mBroadcastsScheduled);
+    }
+    pw.println("  mHandler:");
+    mHandler.dump(new PrintWriterPrinter(pw),"    ");
+    needSep=true;
+    printedAnything=true;
+  }
+  if (!printedAnything) {
+    pw.println("  (nothing)");
+  }
+}

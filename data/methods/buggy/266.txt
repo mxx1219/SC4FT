@@ -1,0 +1,22 @@
+private static TaskStateProto buildTaskReport(TaskId taskId,Task task){
+  TaskStateProto.Builder builder=TaskStateProto.newBuilder();
+  if (!PSAgentContext.get().syncClockEnable()) {
+    builder.setIteration(task.getTaskContext().getIteration());
+    Map<Integer,AtomicInteger> matrixClocks=task.getTaskContext().getMatrixClocks();
+    MatrixClock.Builder clockBuilder=MatrixClock.newBuilder();
+    for (    Entry<Integer,AtomicInteger> clockEntry : matrixClocks.entrySet()) {
+      builder.addMatrixClocks(clockBuilder.setMatrixId(clockEntry.getKey()).setClock(clockEntry.getValue().get()).build());
+    }
+  }
+  builder.setProgress(task.getProgress());
+  builder.setState(task.getTaskState().toString());
+  builder.setTaskId(ProtobufUtil.convertToIdProto(taskId));
+  Pair.Builder kvBuilder=Pair.newBuilder();
+  Map<String,AtomicLong> taskCounters=task.getTaskContext().getCounters();
+  for (  Entry<String,AtomicLong> kv : taskCounters.entrySet()) {
+    kvBuilder.setKey(kv.getKey());
+    kvBuilder.setValue(String.valueOf(kv.getValue().longValue()));
+    builder.addCounters(kvBuilder.build());
+  }
+  return builder.build();
+}

@@ -1,0 +1,61 @@
+private void process(HttpServletRequest request,HttpServletResponse response,Query query) throws ServletException, IOException {
+  APIServiceLevel serviceLevel=getDefaultServiceLevel();
+  if (query.isDoS_blackout()) {
+    response.sendError(503,"your request frequency is too high");
+    return;
+  }
+  if (serviceLevel == APIServiceLevel.ADMIN && !query.isLocalhostAccess()) {
+    response.sendError(503,"access only allowed from localhost, your request comes from " + query.getClientHost());
+    return;
+  }
+  String host=request.getRemoteHost();
+  String credential="host:" + host;
+  JSONObject authentication_obj=null;
+  if (DAO.authentication.has(credential)) {
+    authentication_obj=DAO.authentication.getJSONObject(credential);
+  }
+ else {
+    authentication_obj=new JSONObject();
+    DAO.authentication.put(credential,authentication_obj);
+  }
+  Authentication authentication=new Authentication(authentication_obj,DAO.authentication);
+  Identity identity=authentication.getIdentity();
+  if (identity == null)   identity=new Identity(Identity.Type.host,host);
+  JSONObject authorization_obj=null;
+  if (DAO.authorization.has(identity.toString())) {
+    authorization_obj=DAO.authorization.getJSONObject(identity.toString());
+  }
+ else {
+    authorization_obj=new JSONObject();
+    DAO.authorization.put(identity.toString(),authorization_obj);
+  }
+  Authorization authorization=new Authorization(authorization_obj,DAO.authorization);
+  Accounting accounting_temporary=DAO.accounting_temporary.get(identity.toString());
+  if (accounting_temporary == null) {
+    accounting_temporary=new Accounting();
+    DAO.accounting_temporary.put(identity.toString(),accounting_temporary);
+  }
+  authorization.setAccounting(accounting_temporary);
+  String callback=query.get("callback","");
+  boolean jsonp=callback.length() > 0;
+  boolean minified=query.get("minified",false);
+  try {
+    JSONObject json=serviceImpl(query,authorization);
+    if (json == null) {
+      response.sendError(400,"your request does not contain the required data");
+      return;
+    }
+    query.setResponse(response,"application/javascript");
+    response.setCharacterEncoding("UTF-8");
+    PrintWriter sos=response.getWriter();
+    if (jsonp)     sos.print(callback + "(");
+    sos.print(json.toString(minified ? 0 : 2));
+    if (jsonp)     sos.println(");");
+    sos.println();
+    query.finalize();
+  }
+ catch (  APIException e) {
+    response.sendError(e.getStatusCode(),e.getMessage());
+    return;
+  }
+}

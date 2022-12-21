@@ -1,0 +1,70 @@
+package org.apache.druid.server.lookup.namespace.cache;
+import com.google.inject.Inject;
+import org.apache.druid.java.util.common.ISE;
+import org.apache.druid.java.util.common.lifecycle.Lifecycle;
+import org.apache.druid.java.util.common.logger.Logger;
+import org.apache.druid.java.util.emitter.service.ServiceEmitter;
+import org.apache.druid.java.util.emitter.service.ServiceMetricEvent;
+import org.apache.druid.server.lookup.namespace.NamespaceExtractionConfig;
+import java.lang.ref.WeakReference;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+public class OnHeapNamespaceExtractionCacheManager extends NamespaceExtractionCacheManager {
+  private static final Logger LOG=new Logger(OnHeapNamespaceExtractionCacheManager.class);
+  private final Set<WeakReference<ConcurrentMap<String,String>>> caches=Collections.newSetFromMap(new ConcurrentHashMap<WeakReference<ConcurrentMap<String,String>>,Boolean>());
+  @Inject public OnHeapNamespaceExtractionCacheManager(  Lifecycle lifecycle,  ServiceEmitter serviceEmitter,  NamespaceExtractionConfig config){
+    super(lifecycle,serviceEmitter,config);
+  }
+  private void expungeCollectedCaches(){
+    for (Iterator<WeakReference<ConcurrentMap<String,String>>> iterator=caches.iterator(); iterator.hasNext(); ) {
+      WeakReference<?> cacheRef=iterator.next();
+      if (cacheRef.get() == null) {
+        iterator.remove();
+      }
+    }
+  }
+  @Override public CacheHandler createCache(){
+    ConcurrentMap<String,String> cache=new ConcurrentHashMap<>();
+    WeakReference<ConcurrentMap<String,String>> cacheRef=new WeakReference<>(cache);
+    expungeCollectedCaches();
+    caches.add(cacheRef);
+    return new CacheHandler(this,cache,cacheRef);
+  }
+  @Override void disposeCache(  CacheHandler cacheHandler){
+    if (!(cacheHandler.id instanceof WeakReference)) {
+      throw new ISE("Expected WeakReference, got: %s",cacheHandler.id);
+    }
+    caches.remove(cacheHandler.id);
+  }
+  @Override int cacheCount(){
+    expungeCollectedCaches();
+    return caches.size();
+  }
+  @Override void monitor(  ServiceEmitter serviceEmitter){
+    long numEntries=0;
+    long size=0;
+    expungeCollectedCaches();
+    for (    WeakReference<ConcurrentMap<String,String>> cacheRef : caches) {
+      final Map<String,String> cache=cacheRef.get();
+      if (cache == null) {
+        continue;
+      }
+      numEntries+=cache.size();
+      for (      Map.Entry<String,String> sEntry : cache.entrySet()) {
+        final String key=sEntry.getKey();
+        final String value=sEntry.getValue();
+        if (key == null || value == null) {
+          LOG.debug("Missing entries for cache key");
+          continue;
+        }
+        size+=key.length() + value.length();
+      }
+    }
+    serviceEmitter.emit(ServiceMetricEvent.builder().build("namespace/cache/numEntries",numEntries));
+    serviceEmitter.emit(ServiceMetricEvent.builder().build("namespace/cache/heapSizeInBytes",size * Character.BYTES));
+  }
+}

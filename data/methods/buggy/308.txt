@@ -1,0 +1,3 @@
+private void updateEntityCapsVersion(){
+  if ((connection instanceof XMPPConnection) && (capsManager != null))   capsManager.calculateEntityCapsVersion(getOwnDiscoverInfo());
+}

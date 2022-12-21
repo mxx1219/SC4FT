@@ -1,0 +1,6 @@
+private static Serde<Struct> getGenericKeySerde(final LogicalSchema schema,final String formatName){
+  final FormatInfo formatInfo=getFormatInfo(formatName);
+  final SchemaRegistryClient srClient=new MockSchemaRegistryClient();
+  final PersistenceSchema persistenceSchema=PersistenceSchema.from(schema.key(),SerdeFeatures.of(SerdeFeature.UNWRAP_SINGLES));
+  return new GenericKeySerDe().create(formatInfo,persistenceSchema,new KsqlConfig(Collections.emptyMap()),null,"benchmark",ProcessingLogContext.create());
+}

@@ -1,0 +1,71 @@
+@Override public Void call() throws Exception {
+  final String name=Integer.toString(threadId);
+  Set<Integer> clusters=new LinkedHashSet<Integer>();
+  LinkedHashMap<String,Long> clusterNames=new LinkedHashMap<String,Long>();
+  for (int i=0; i < count; i++) {
+    final ODatabaseDocumentTx database=poolFactory.get(databaseUrl,"admin","admin").acquire();
+    try {
+      final int id=baseCount + i;
+      final String uid=UUID.randomUUID().toString();
+      int retry;
+      for (retry=0; retry < maxRetries; retry++) {
+        if ((i + 1) % printBlocksOf == 0)         System.out.println("\nWriter " + database.getURL() + "(thread="+ threadId+ ") managed "+ (i + 1)+ "/"+ count+ " records so far");
+        if (useTransactions)         database.begin();
+        try {
+          ODocument person=createRecord(database,id,uid);
+          updateRecord(database,person);
+          checkRecord(database,person);
+          deleteRecord(database,person);
+          checkRecordIsDeleted(database,person);
+          person=createRecord(database,id,uid);
+          updateRecord(database,person);
+          checkRecord(database,person);
+          if (useTransactions)           database.commit();
+          if (delayWriter > 0)           Thread.sleep(delayWriter);
+          clusters.add(person.getIdentity().getClusterId());
+          String clusterName=database.getClusterNameById(person.getIdentity().getClusterId());
+          Long counter=clusterNames.get(clusterName);
+          if (counter == null)           counter=0L;
+          clusterNames.put(clusterName,counter + 1);
+          break;
+        }
+ catch (        InterruptedException e) {
+          System.out.println("Writer received interrupt (db=" + database.getURL());
+          Thread.currentThread().interrupt();
+          break;
+        }
+catch (        ORecordNotFoundException e) {
+          System.out.println("ORecordNotFoundException Exception caught on writer thread " + threadId + " (db="+ database.getURL());
+        }
+catch (        ORecordDuplicatedException e) {
+          System.out.println("ORecordDuplicatedException Exception caught on writer thread " + threadId + " (db="+ database.getURL());
+        }
+catch (        OTransactionException e) {
+          if (e.getCause() instanceof ORecordDuplicatedException)           ;
+ else           throw e;
+        }
+catch (        ONeedRetryException e) {
+          if (retry >= maxRetries)           e.printStackTrace();
+        }
+catch (        ODistributedException e) {
+          System.out.println("ODistributedException Exception caught on writer thread " + threadId + " (db="+ database.getURL());
+          if (!(e.getCause() instanceof ORecordDuplicatedException)) {
+            database.rollback();
+            throw e;
+          }
+        }
+catch (        Throwable e) {
+          System.out.println(e.getClass() + " Exception caught on writer thread " + threadId+ " (db="+ database.getURL());
+          e.printStackTrace();
+          return null;
+        }
+      }
+    }
+  finally {
+      runningWriters.countDown();
+      database.close();
+    }
+  }
+  System.out.println("\nWriter " + name + " END total:"+ count+ " clusters:"+ clusters+ " names:"+ clusterNames);
+  return null;
+}

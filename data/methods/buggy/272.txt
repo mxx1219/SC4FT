@@ -1,0 +1,17 @@
+@Override public Processor createProcessor(RouteContext routeContext) throws Exception {
+  Processor childProcessor=this.createChildProcessor(routeContext,true);
+  ScheduledExecutorService scheduled=ProcessorDefinitionHelper.getConfiguredScheduledExecutorService(routeContext,"Throttle",this,isAsyncDelayed());
+  long period=getTimePeriodMillis() != null ? getTimePeriodMillis() : 1000L;
+  Expression maxRequestsExpression=createMaxRequestsPerPeriodExpression(routeContext);
+  Throttler answer=new Throttler(childProcessor,maxRequestsExpression,period,scheduled);
+  if (getAsyncDelayed() != null) {
+    answer.setAsyncDelayed(getAsyncDelayed());
+  }
+  if (getCallerRunsWhenRejected() == null) {
+    answer.setCallerRunsWhenRejected(true);
+  }
+ else {
+    answer.setCallerRunsWhenRejected(getCallerRunsWhenRejected());
+  }
+  return answer;
+}

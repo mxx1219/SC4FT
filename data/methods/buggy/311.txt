@@ -1,0 +1,9 @@
+private static boolean classOk(String className){
+  try {
+    JavaSamplerClient client=(JavaSamplerClient)Class.forName(className,true,Thread.currentThread().getContextClassLoader()).newInstance();
+    return client instanceof JavaSamplerClient;
+  }
+ catch (  Exception ex) {
+    return false;
+  }
+}

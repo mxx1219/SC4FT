@@ -1,0 +1,3 @@
+public Location writeCommand(DataStructure command,boolean syncHint,boolean forceSync) throws IOException {
+  return asyncDataManager.write(wireFormat.marshal(command),(forceSync || (syncHint && syncOnWrite)));
+}

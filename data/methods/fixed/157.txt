@@ -1,0 +1,5 @@
+public PagingState state(){
+  if (isExhausted())   return null;
+  PagingState state=pagers[current].state();
+  return new PagingState(pagers[current].key(),state == null ? null : state.rowMark,remaining,pagers[current].remainingInPartition());
+}

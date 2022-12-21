@@ -1,0 +1,33 @@
+protected synchronized void closeImpl() throws IOException {
+  if (isClosed()) {
+    streamer.getLastException().check();
+    return;
+  }
+  try {
+    flushBuffer();
+    if (currentPacket != null) {
+      streamer.waitAndQueuePacket(currentPacket);
+      currentPacket=null;
+    }
+    if (streamer.getBytesCurBlock() != 0) {
+      currentPacket=createPacket(0,0,streamer.getBytesCurBlock(),streamer.getAndIncCurrentSeqno(),true);
+      currentPacket.setSyncBlock(shouldSyncBlock);
+    }
+    flushInternal();
+    ExtendedBlock lastBlock=streamer.getBlock();
+    closeThreads(false);
+    TraceScope scope=Trace.startSpan("completeFile",Sampler.NEVER);
+    try {
+      completeFile(lastBlock);
+    }
+  finally {
+      scope.close();
+    }
+    dfsClient.endFileLease(fileId);
+  }
+ catch (  ClosedChannelException e) {
+  }
+ finally {
+    setClosed();
+  }
+}

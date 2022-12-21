@@ -1,0 +1,21 @@
+@Nullable private static TaskStackBuilder getCommits(@NonNull Context context,@NonNull Uri uri){
+  List<String> segments=uri.getPathSegments();
+  if (segments == null || segments.isEmpty() || segments.size() < 3)   return null;
+  String login=null;
+  String repoId=null;
+  String sha=null;
+  if (segments.size() > 3 && segments.get(3).equals("commits")) {
+    login=segments.get(1);
+    repoId=segments.get(2);
+    sha=segments.get(4);
+  }
+ else   if (segments.get(2).equals("commits")) {
+    login=segments.get(0);
+    repoId=segments.get(1);
+    sha=uri.getLastPathSegment();
+  }
+  if (login != null && sha != null && repoId != null) {
+    return TaskStackBuilder.create(context).addParentStack(MainView.class).addNextIntentWithParentStack(new Intent(context,MainView.class)).addNextIntentWithParentStack(RepoPagerView.createIntent(context,repoId,login)).addNextIntent(CommitPagerView.createIntent(context,repoId,login,sha));
+  }
+  return null;
+}

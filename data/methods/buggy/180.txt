@@ -1,0 +1,30 @@
+@Test public void testGzipCompressedByContentTypeWithEncoding() throws Exception {
+  GzipHandler gzipHandler=new GzipHandler();
+  gzipHandler.setMinGzipSize(32);
+  gzipHandler.addIncludedMimeTypes("text/plain");
+  gzipHandler.setExcludedAgentPatterns();
+  server=new Server();
+  LocalConnector localConnector=new LocalConnector(server);
+  server.addConnector(localConnector);
+  ServletContextHandler contextHandler=new ServletContextHandler();
+  contextHandler.setContextPath("/context");
+  contextHandler.addServlet(HttpContentTypeWithEncodingServlet.class,"/*");
+  gzipHandler.setHandler(contextHandler);
+  server.setHandler(gzipHandler);
+  server.start();
+  HttpTester.Request request=HttpTester.newRequest();
+  request.setMethod("GET");
+  request.setVersion(HttpVersion.HTTP_1_1);
+  request.setHeader("Host","tester");
+  request.setHeader("Connection","close");
+  request.setHeader("Accept-Encoding","gzip");
+  request.setURI("/context/xxx");
+  ByteBuffer rawResponse=localConnector.getResponse(request.generate(),5,TimeUnit.SECONDS);
+  HttpTester.Response response=HttpTester.parseResponse(rawResponse);
+  assertThat("Response status",response.getStatus(),is(HttpStatus.OK_200));
+  assertThat("Response[Content-Encoding]",response.get("Content-Encoding"),containsString("gzip"));
+  assertThat("Response[Vary]",response.get("Vary"),is("Accept-Encoding"));
+  UncompressedMetadata metadata=parseResponseContent(response);
+  assertThat("Response[Content] raw length vs uncompressed length",metadata.contentLength,not(is(metadata.uncompressedSize)));
+  assertThat("(Uncompressed) Content",metadata.getContentUTF8(),is(HttpContentTypeWithEncodingServlet.CONTENT));
+}

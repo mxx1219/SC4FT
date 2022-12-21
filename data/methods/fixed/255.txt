@@ -1,0 +1,13 @@
+private void validatePlanShape(final Plan plan,final Plan targetPlan,final ValidationErrors errors){
+  if (plan.getAllPhases().length != targetPlan.getAllPhases().length) {
+    errors.add(new ValidationError(String.format("Number of phases for plan '%s' differs between version '%s' and '%s'",plan.getName(),plan.getCatalog().getEffectiveDate(),targetPlan.getCatalog().getEffectiveDate()),VersionedCatalog.class,""));
+    return;
+  }
+  for (int i=0; i < plan.getAllPhases().length; i++) {
+    final PlanPhase cur=plan.getAllPhases()[i];
+    final PlanPhase target=targetPlan.getAllPhases()[i];
+    if (!cur.getName().equals(target.getName())) {
+      errors.add(new ValidationError(String.format("Phase '%s'for plan '%s' in version '%s' does not exist in version '%s'",cur.getName(),plan.getName(),plan.getCatalog().getEffectiveDate(),targetPlan.getCatalog().getEffectiveDate()),VersionedCatalog.class,""));
+    }
+  }
+}

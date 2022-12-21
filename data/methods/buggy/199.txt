@@ -1,0 +1,44 @@
+@Override public void openInternal(InputSplit inputSplit) throws IOException {
+  try {
+    LOG.info(inputSplit.toString());
+    ClassUtil.forName(drivername,getClass().getClassLoader());
+    if (useMaxFunc) {
+      getMaxValue(inputSplit);
+    }
+    initMetric(inputSplit);
+    if (!canReadData(inputSplit)) {
+      LOG.warn("Not read data when the start location are equal to end location");
+      hasNext=false;
+      return;
+    }
+    dbConn=DBUtil.getConnection(dbURL,username,password);
+    dbConn.setAutoCommit(false);
+    Statement statement=dbConn.createStatement(resultSetType,resultSetConcurrency);
+    if (EDatabaseType.MySQL == databaseInterface.getDatabaseType()) {
+      statement.setFetchSize(Integer.MIN_VALUE);
+    }
+ else {
+      statement.setFetchSize(fetchSize);
+    }
+    if (EDatabaseType.Carbondata != databaseInterface.getDatabaseType()) {
+      statement.setQueryTimeout(queryTimeOut);
+    }
+    String querySql=buildQuerySql(inputSplit);
+    resultSet=statement.executeQuery(querySql);
+    columnCount=resultSet.getMetaData().getColumnCount();
+    hasNext=resultSet.next();
+    if (StringUtils.isEmpty(customSql)) {
+      descColumnTypeList=DBUtil.analyzeTable(dbURL,username,password,databaseInterface,table,metaColumns);
+    }
+ else {
+      descColumnTypeList=new ArrayList<>();
+      for (      MetaColumn metaColumn : metaColumns) {
+        descColumnTypeList.add(metaColumn.getName());
+      }
+    }
+  }
+ catch (  SQLException se) {
+    throw new IllegalArgumentException("open() failed." + se.getMessage(),se);
+  }
+  LOG.info("JdbcInputFormat[" + jobName + "]open: end");
+}

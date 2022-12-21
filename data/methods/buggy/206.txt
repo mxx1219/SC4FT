@@ -1,0 +1,35 @@
+public boolean verifyWxPayParams(Map<String,Object> payContext){
+  WxPayOrderNotifyResult params=(WxPayOrderNotifyResult)payContext.get("parameters");
+  if (!PayConstant.RETURN_VALUE_SUCCESS.equalsIgnoreCase(params.getResultCode()) || !PayConstant.RETURN_VALUE_SUCCESS.equalsIgnoreCase(params.getReturnCode())) {
+    _log.error("returnCode={},resultCode={},errCode={},errCodeDes={}",params.getReturnCode(),params.getResultCode(),params.getErrCode(),params.getErrCodeDes());
+    payContext.put("retMsg","notify data failed");
+    return false;
+  }
+  Integer total_fee=params.getTotalFee();
+  String out_trade_no=params.getOutTradeNo();
+  String payOrderId=out_trade_no;
+  PayOrder payOrder=payOrderService.selectPayOrder(payOrderId);
+  if (payOrder == null) {
+    _log.error("Can't found payOrder form db. payOrderId={}, ",payOrderId);
+    payContext.put("retMsg","Can't found payOrder");
+    return false;
+  }
+  String mchId=payOrder.getMchId();
+  String channelId=payOrder.getChannelId();
+  PayChannel payChannel=payChannelService.selectPayChannel(channelId,mchId);
+  if (payChannel == null) {
+    _log.error("Can't found payChannel form db. mchId={} channelId={}, ",payOrderId,mchId,channelId);
+    payContext.put("retMsg","Can't found payChannel");
+    return false;
+  }
+  payContext.put("wxPayConfig",WxPayUtil.getWxPayConfig(payChannel.getParam()));
+  long wxPayAmt=new BigDecimal(total_fee).longValue();
+  long dbPayAmt=payOrder.getAmount().longValue();
+  if (dbPayAmt != wxPayAmt) {
+    _log.error("db payOrder record payPrice not equals total_fee. total_fee={},payOrderId={}",total_fee,payOrderId);
+    payContext.put("retMsg","total_fee is not the same");
+    return false;
+  }
+  payContext.put("payOrder",payOrder);
+  return true;
+}

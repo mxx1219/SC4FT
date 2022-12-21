@@ -1,0 +1,40 @@
+private void status(Request request,Response response){
+  int statusCode=response.getStatus();
+  Context context=request.getContext();
+  if (context == null) {
+    return;
+  }
+  if (!response.isError()) {
+    return;
+  }
+  ErrorPage errorPage=context.findErrorPage(statusCode);
+  if (errorPage == null) {
+    errorPage=context.findErrorPage(0);
+  }
+  if (errorPage != null) {
+    response.setAppCommitted(false);
+    request.setAttribute(RequestDispatcher.ERROR_STATUS_CODE,Integer.valueOf(statusCode));
+    String message=response.getMessage();
+    if (message == null) {
+      message="";
+    }
+    request.setAttribute(RequestDispatcher.ERROR_MESSAGE,message);
+    request.setAttribute(ApplicationFilterFactory.DISPATCHER_REQUEST_PATH_ATTR,errorPage.getLocation());
+    request.setAttribute(ApplicationFilterFactory.DISPATCHER_TYPE_ATTR,DispatcherType.ERROR);
+    Wrapper wrapper=request.getWrapper();
+    if (wrapper != null) {
+      request.setAttribute(RequestDispatcher.ERROR_SERVLET_NAME,wrapper.getName());
+    }
+    request.setAttribute(RequestDispatcher.ERROR_REQUEST_URI,request.getRequestURI());
+    if (custom(request,response,errorPage)) {
+      try {
+        response.flushBuffer();
+      }
+ catch (      ClientAbortException e) {
+      }
+catch (      IOException e) {
+        container.getLogger().warn("Exception Processing " + errorPage,e);
+      }
+    }
+  }
+}

@@ -1,0 +1,3 @@
+@Override public void onBindViewHolder(CountryAdapter.CountryViewHolder viewHolder,int position){
+  viewHolder.populateViews(mFilteredList.get(position));
+}

@@ -1,0 +1,17 @@
+@Override public ProcessContext<Order> execute(ProcessContext<Order> context) throws Exception {
+  Order order=context.getSeedData();
+  if (!order.getShippingOverride()) {
+    Money totalFulfillmentCharges=BroadleafCurrencyUtils.getMoney(BigDecimal.ZERO,order.getCurrency());
+    for (    FulfillmentGroup fulfillmentGroup : order.getFulfillmentGroups()) {
+      if (fulfillmentGroup != null) {
+        fulfillmentGroup=fulfillmentPricingService.calculateCostForFulfillmentGroup(fulfillmentGroup);
+        if (fulfillmentGroup.getFulfillmentPrice() != null) {
+          totalFulfillmentCharges=totalFulfillmentCharges.add(fulfillmentGroup.getFulfillmentPrice());
+        }
+      }
+    }
+    order.setTotalFulfillmentCharges(totalFulfillmentCharges);
+    context.setSeedData(order);
+  }
+  return context;
+}

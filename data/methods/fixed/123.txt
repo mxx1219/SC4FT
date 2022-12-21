@@ -1,0 +1,10 @@
+@Override public void setUp() throws Exception {
+synchronized (NumberNormalizerITest.class) {
+    if (pipeline == null) {
+      pipeline=new AnnotationPipeline();
+      pipeline.addAnnotator(new PTBTokenizerAnnotator(false));
+      pipeline.addAnnotator(new WordsToSentencesAnnotator(false));
+      pipeline.addAnnotator(new POSTaggerAnnotator(false));
+    }
+  }
+}

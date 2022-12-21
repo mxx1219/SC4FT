@@ -1,0 +1,149 @@
+package org.jdbi.v3.core.statement;
+import org.jdbi.v3.core.result.ResultProducers.returningGeneratedKeys;
+import org.jdbi.v3.core.result.ResultProducers.returningResults;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.NoSuchElementException;
+import org.jdbi.v3.core.Handle;
+import org.jdbi.v3.core.result.ResultBearing;
+import org.jdbi.v3.core.result.ResultIterator;
+import org.jdbi.v3.core.result.ResultProducer;
+import org.jdbi.v3.core.result.ResultSetMapper;
+import org.jdbi.v3.core.result.UnableToProduceResultException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+public class PreparedBatch extends SqlStatement<PreparedBatch> implements ResultBearing {
+  private static final Logger LOG=LoggerFactory.getLogger(PreparedBatch.class);
+  private final List<Binding> bindings=new ArrayList<>();
+  public PreparedBatch(  Handle handle,  String sql){
+    super(handle,sql);
+  }
+  @Override public <R>R mapResultSet(  ResultSetMapper<R> mapper){
+    return execute(returningResults()).mapResultSet(mapper);
+  }
+  public int[] execute(){
+    return internalBatchExecute().updateCounts;
+  }
+  public ResultIterator<Integer> executeAndGetModCount(){
+    StatementContext ctx=getContext();
+    final int[] modCount=execute();
+    return new ResultIterator<Integer>(){
+      int pos=0;
+      @Override public boolean hasNext(){
+        return pos < modCount.length;
+      }
+      @Override public Integer next(){
+        if (!hasNext()) {
+          throw new NoSuchElementException();
+        }
+        return modCount[pos++];
+      }
+      @Override public StatementContext getContext(){
+        return ctx;
+      }
+      @Override public void close(){
+      }
+    }
+;
+  }
+  public ResultBearing executeAndReturnGeneratedKeys(  String... columnNames){
+    return execute(returningGeneratedKeys(columnNames));
+  }
+  public <R>R execute(  ResultProducer<R> producer){
+    try {
+      return producer.produce(null,getContext());
+    }
+ catch (    SQLException e) {
+      try {
+        close();
+      }
+ catch (      Exception e1) {
+        e.addSuppressed(e1);
+      }
+      throw new UnableToProduceResultException("Exception producing batch result",e,getContext());
+    }
+  }
+private static class ExecutedBatch {
+    final PreparedStatement stmt;
+    final int[] updateCounts;
+    ExecutedBatch(    PreparedStatement stmt,    int[] updateCounts){
+      this.stmt=stmt;
+      this.updateCounts=updateCounts;
+    }
+  }
+  private ExecutedBatch internalBatchExecute(){
+    if (!getBinding().isEmpty()) {
+      add();
+    }
+    if (bindings.isEmpty()) {
+      throw new IllegalStateException("No batch parts to execute");
+    }
+    String renderedSql=getConfig(SqlStatements.class).getTemplateEngine().render(getSql(),getContext());
+    getContext().setRenderedSql(renderedSql);
+    ParsedSql parsedSql=getConfig(SqlStatements.class).getSqlParser().parse(renderedSql,getContext());
+    String sql=parsedSql.getSql();
+    ParsedParameters parsedParameters=parsedSql.getParameters();
+    getContext().setParsedSql(sql);
+    try {
+      final PreparedStatement stmt;
+      try {
+        StatementBuilder statementBuilder=getHandle().getStatementBuilder();
+        Connection connection=getHandle().getConnection();
+        stmt=statementBuilder.create(connection,sql,getContext());
+        addCleanable(null);
+      }
+ catch (      SQLException e) {
+        throw new UnableToCreateStatementException(e,getContext());
+      }
+      try {
+        for (        Binding binding : bindings) {
+          ArgumentBinder.bind(parsedParameters,binding,stmt,getContext());
+          stmt.addBatch();
+        }
+      }
+ catch (      SQLException e) {
+        throw new UnableToExecuteStatementException("Exception while binding parameters",e,getContext());
+      }
+      beforeExecution(stmt);
+      try {
+        final long start=System.nanoTime();
+        final int[] rs=stmt.executeBatch();
+        final long elapsedTime=System.nanoTime() - start;
+        LOG.trace("Prepared batch of {} parts executed in {}ms",bindings.size(),elapsedTime / 1000000L,parsedSql);
+        getConfig(SqlStatements.class).getTimingCollector().collect(elapsedTime,getContext());
+        afterExecution(stmt);
+        return new ExecutedBatch(stmt,rs);
+      }
+ catch (      SQLException e) {
+        throw new UnableToExecuteStatementException(Batch.mungeBatchException(e),getContext());
+      }
+    }
+  finally {
+      bindings.clear();
+    }
+  }
+  public PreparedBatch add(){
+    bindings.add(getBinding());
+    getContext().setBinding(new Binding());
+    return this;
+  }
+  public PreparedBatch add(  Object... args){
+    for (int i=0; i < args.length; i++) {
+      bind(i,args[i]);
+    }
+    add();
+    return this;
+  }
+  public PreparedBatch add(  Map<String,?> args){
+    bindMap(args);
+    add();
+    return this;
+  }
+  public int size(){
+    return bindings.size();
+  }
+}

@@ -1,0 +1,29 @@
+package org.optaplanner.core.config.heuristic.selector.move.factory;
+import com.thoughtworks.xstream.annotations.XStreamAlias;
+import org.optaplanner.core.config.heuristic.policy.HeuristicConfigPolicy;
+import org.optaplanner.core.config.heuristic.selector.common.SelectionCacheType;
+import org.optaplanner.core.config.heuristic.selector.move.MoveSelectorConfig;
+import org.optaplanner.core.config.util.ConfigUtils;
+import org.optaplanner.core.impl.heuristic.selector.move.MoveSelector;
+import org.optaplanner.core.impl.heuristic.selector.move.factory.MoveIteratorFactory;
+import org.optaplanner.core.impl.heuristic.selector.move.factory.MoveIteratorFactoryToMoveSelectorBridge;
+@XStreamAlias("moveIteratorFactory") public class MoveIteratorFactoryConfig extends MoveSelectorConfig {
+  protected Class<? extends MoveIteratorFactory> moveIteratorFactoryClass=null;
+  public Class<? extends MoveIteratorFactory> getMoveIteratorFactoryClass(){
+    return moveIteratorFactoryClass;
+  }
+  public void setMoveIteratorFactoryClass(  Class<? extends MoveIteratorFactory> moveIteratorFactoryClass){
+    this.moveIteratorFactoryClass=moveIteratorFactoryClass;
+  }
+  public MoveSelector buildBaseMoveSelector(  HeuristicConfigPolicy configPolicy,  SelectionCacheType minimumCacheType,  boolean randomSelection){
+    MoveIteratorFactory moveIteratorFactory=ConfigUtils.newInstance(this,"moveIteratorFactoryClass",moveIteratorFactoryClass);
+    return new MoveIteratorFactoryToMoveSelectorBridge(moveIteratorFactory,randomSelection);
+  }
+  public void inherit(  MoveIteratorFactoryConfig inheritedConfig){
+    super.inherit(inheritedConfig);
+    moveIteratorFactoryClass=ConfigUtils.inheritOverwritableProperty(moveIteratorFactoryClass,inheritedConfig.getMoveIteratorFactoryClass());
+  }
+  @Override public String toString(){
+    return getClass().getSimpleName() + "(" + moveIteratorFactoryClass+ ")";
+  }
+}

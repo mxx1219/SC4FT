@@ -1,0 +1,181 @@
+package com.squareup.okhttp;
+import com.squareup.okhttp.internal.Platform;
+import com.squareup.okhttp.internal.Util;
+import java.net.SocketException;
+import java.util.ArrayList;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.ListIterator;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+public class ConnectionPool {
+  private static final int MAX_CONNECTIONS_TO_CLEANUP=2;
+  private static final long DEFAULT_KEEP_ALIVE_DURATION_MS=5 * 60 * 1000;
+  private static final ConnectionPool systemDefault;
+static {
+    String keepAlive=System.getProperty("http.keepAlive");
+    String keepAliveDuration=System.getProperty("http.keepAliveDuration");
+    String maxIdleConnections=System.getProperty("http.maxConnections");
+    long keepAliveDurationMs=keepAliveDuration != null ? Long.parseLong(keepAliveDuration) : DEFAULT_KEEP_ALIVE_DURATION_MS;
+    if (keepAlive != null && !Boolean.parseBoolean(keepAlive)) {
+      systemDefault=new ConnectionPool(0,keepAliveDurationMs);
+    }
+ else     if (maxIdleConnections != null) {
+      systemDefault=new ConnectionPool(Integer.parseInt(maxIdleConnections),keepAliveDurationMs);
+    }
+ else {
+      systemDefault=new ConnectionPool(5,keepAliveDurationMs);
+    }
+  }
+  private final int maxIdleConnections;
+  private final long keepAliveDurationNs;
+  private final LinkedList<Connection> connections=new LinkedList<Connection>();
+  private final ExecutorService executorService=new ThreadPoolExecutor(0,1,60L,TimeUnit.SECONDS,new LinkedBlockingQueue<Runnable>());
+  private final Callable<Void> connectionsCleanupCallable=new Callable<Void>(){
+    @Override public Void call() throws Exception {
+      List<Connection> expiredConnections=new ArrayList<Connection>(MAX_CONNECTIONS_TO_CLEANUP);
+      int idleConnectionCount=0;
+synchronized (ConnectionPool.this) {
+        for (ListIterator<Connection> i=connections.listIterator(connections.size()); i.hasPrevious(); ) {
+          Connection connection=i.previous();
+          if (!connection.isAlive() || connection.isExpired(keepAliveDurationNs)) {
+            i.remove();
+            expiredConnections.add(connection);
+            if (expiredConnections.size() == MAX_CONNECTIONS_TO_CLEANUP)             break;
+          }
+ else           if (connection.isIdle()) {
+            idleConnectionCount++;
+          }
+        }
+        for (ListIterator<Connection> i=connections.listIterator(connections.size()); i.hasPrevious() && idleConnectionCount > maxIdleConnections; ) {
+          Connection connection=i.previous();
+          if (connection.isIdle()) {
+            expiredConnections.add(connection);
+            i.remove();
+            --idleConnectionCount;
+          }
+        }
+      }
+      for (      Connection expiredConnection : expiredConnections) {
+        Util.closeQuietly(expiredConnection);
+      }
+      return null;
+    }
+  }
+;
+  public ConnectionPool(  int maxIdleConnections,  long keepAliveDurationMs){
+    this.maxIdleConnections=maxIdleConnections;
+    this.keepAliveDurationNs=keepAliveDurationMs * 1000 * 1000;
+  }
+  List<Connection> getConnections(){
+    waitForCleanupCallableToRun();
+synchronized (this) {
+      return new ArrayList<Connection>(connections);
+    }
+  }
+  private void waitForCleanupCallableToRun(){
+    try {
+      executorService.submit(new Runnable(){
+        @Override public void run(){
+        }
+      }
+).get();
+    }
+ catch (    Exception e) {
+      throw new AssertionError();
+    }
+  }
+  public static ConnectionPool getDefault(){
+    return systemDefault;
+  }
+  public synchronized int getConnectionCount(){
+    return connections.size();
+  }
+  public synchronized int getSpdyConnectionCount(){
+    int total=0;
+    for (    Connection connection : connections) {
+      if (connection.isSpdy())       total++;
+    }
+    return total;
+  }
+  public synchronized int getHttpConnectionCount(){
+    int total=0;
+    for (    Connection connection : connections) {
+      if (!connection.isSpdy())       total++;
+    }
+    return total;
+  }
+  public synchronized Connection get(  Address address){
+    Connection foundConnection=null;
+    for (ListIterator<Connection> i=connections.listIterator(connections.size()); i.hasPrevious(); ) {
+      Connection connection=i.previous();
+      if (!connection.getAddress().equals(address) || !connection.isAlive() || System.nanoTime() - connection.getIdleStartTimeNs() >= keepAliveDurationNs) {
+        continue;
+      }
+      i.remove();
+      if (!connection.isSpdy()) {
+        try {
+          Platform.get().tagSocket(connection.getSocket());
+        }
+ catch (        SocketException e) {
+          Util.closeQuietly(connection);
+          Platform.get().logW("Unable to tagSocket(): " + e);
+          continue;
+        }
+      }
+      foundConnection=connection;
+      break;
+    }
+    if (foundConnection != null && foundConnection.isSpdy()) {
+      connections.addFirst(foundConnection);
+    }
+    executorService.submit(connectionsCleanupCallable);
+    return foundConnection;
+  }
+  public void recycle(  Connection connection){
+    executorService.submit(connectionsCleanupCallable);
+    if (connection.isSpdy()) {
+      return;
+    }
+    if (!connection.isAlive()) {
+      Util.closeQuietly(connection);
+      return;
+    }
+    try {
+      Platform.get().untagSocket(connection.getSocket());
+    }
+ catch (    SocketException e) {
+      Platform.get().logW("Unable to untagSocket(): " + e);
+      Util.closeQuietly(connection);
+      return;
+    }
+synchronized (this) {
+      connections.addFirst(connection);
+      connection.resetIdleStartTime();
+    }
+  }
+  public void maybeShare(  Connection connection){
+    executorService.submit(connectionsCleanupCallable);
+    if (!connection.isSpdy()) {
+      return;
+    }
+    if (connection.isAlive()) {
+synchronized (this) {
+        connections.addFirst(connection);
+      }
+    }
+  }
+  public void evictAll(){
+    List<Connection> connections;
+synchronized (this) {
+      connections=new ArrayList<Connection>(this.connections);
+      this.connections.clear();
+    }
+    for (    Connection connection : connections) {
+      Util.closeQuietly(connection);
+    }
+  }
+}

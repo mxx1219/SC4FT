@@ -1,0 +1,22 @@
+private void preparePopup(WindowManager.LayoutParams p){
+  if (mContentView == null || mContext == null || mWindowManager == null) {
+    throw new IllegalStateException("You must specify a valid content view by " + "calling setContentView() before attempting to show the popup.");
+  }
+  if (p.accessibilityTitle == null) {
+    p.accessibilityTitle=mContext.getString(R.string.popup_window_default_title);
+  }
+  if (mDecorView != null) {
+    mDecorView.cancelTransitions();
+  }
+  if (mBackground != null) {
+    mBackgroundView=createBackgroundView(mContentView);
+    mBackgroundView.setBackground(mBackground);
+  }
+ else {
+    mBackgroundView=mContentView;
+  }
+  mDecorView=createDecorView(mBackgroundView);
+  mBackgroundView.setElevation(mElevation);
+  p.setSurfaceInsets(mBackgroundView,true,true);
+  mPopupViewInitialLayoutDirectionInherited=(mContentView.getRawLayoutDirection() == View.LAYOUT_DIRECTION_INHERIT);
+}

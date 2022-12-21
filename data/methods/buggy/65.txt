@@ -1,0 +1,12 @@
+@Test void adaptiveTopologyUpdatetUsesTimeout(){
+  ClusterTopologyRefreshOptions topologyRefreshOptions=ClusterTopologyRefreshOptions.builder().adaptiveRefreshTriggersTimeout(500,TimeUnit.MILLISECONDS).refreshTriggersReconnectAttempts(0).enableAllAdaptiveRefreshTriggers().build();
+  clusterClient.setOptions(ClusterClientOptions.builder().topologyRefreshOptions(topologyRefreshOptions).build());
+  RedisAdvancedClusterAsyncCommands<String,String> clusterConnection=clusterClient.connect().async();
+  clusterConnection.quit();
+  Delay.delay(Duration.ofMillis(200));
+  Wait.untilTrue(null).waitOrTimeout();
+  clusterClient.getPartitions().clear();
+  clusterConnection.quit();
+  Wait.untilTrue(null).waitOrTimeout();
+  clusterConnection.getStatefulConnection().close();
+}

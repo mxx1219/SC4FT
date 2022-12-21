@@ -1,0 +1,246 @@
+package marytts.modules;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.StringTokenizer;
+import java.util.regex.Pattern;
+import java.util.regex.Matcher;
+import marytts.MaryConstants;
+import marytts.datatypes.MaryData;
+import marytts.datatypes.MaryDataType;
+import marytts.datatypes.MaryXML;
+import marytts.exceptions.MaryConfigurationException;
+import marytts.fst.FSTLookup;
+import marytts.modules.phonemiser.AllophoneSet;
+import marytts.modules.phonemiser.TrainedLTS;
+import marytts.server.MaryProperties;
+import marytts.util.MaryRuntimeUtils;
+import marytts.util.MaryUtils;
+import marytts.util.dom.MaryDomUtils;
+import org.w3c.dom.DOMException;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.traversal.NodeIterator;
+public class JPhonemiser extends InternalModule {
+  protected Map<String,List<String>> userdict;
+  protected FSTLookup lexicon;
+  protected TrainedLTS lts;
+  protected boolean removeTrailingOneFromPhones=true;
+  protected AllophoneSet allophoneSet;
+  public JPhonemiser(  String propertyPrefix) throws IOException, MaryConfigurationException {
+    this("JPhonemiser",MaryDataType.PARTSOFSPEECH,MaryDataType.PHONEMES,propertyPrefix + "allophoneset",propertyPrefix + "userdict",propertyPrefix + "lexicon",propertyPrefix + "lettertosound",propertyPrefix + "removeTrailingOneFromPhones");
+  }
+  public JPhonemiser(  String componentName,  MaryDataType inputType,  MaryDataType outputType,  String allophonesProperty,  String userdictProperty,  String lexiconProperty,  String ltsProperty) throws IOException, MaryConfigurationException {
+    this(componentName,inputType,outputType,allophonesProperty,userdictProperty,lexiconProperty,ltsProperty,null);
+  }
+  public JPhonemiser(  String componentName,  MaryDataType inputType,  MaryDataType outputType,  String allophonesProperty,  String userdictProperty,  String lexiconProperty,  String ltsProperty,  String removetrailingonefromphonesProperty) throws IOException, MaryConfigurationException {
+    super(componentName,inputType,outputType,MaryRuntimeUtils.needAllophoneSet(allophonesProperty).getLocale());
+    allophoneSet=MaryRuntimeUtils.needAllophoneSet(allophonesProperty);
+    String userdictFilename=MaryProperties.getFilename(userdictProperty);
+    if (userdictFilename != null) {
+      if (new File(userdictFilename).exists()) {
+        userdict=readLexicon(userdictFilename);
+      }
+ else {
+        logger.info("User dictionary '" + userdictFilename + "' for locale '"+ getLocale()+ "' does not exist. Ignoring.");
+      }
+    }
+    InputStream lexiconStream=MaryProperties.needStream(lexiconProperty);
+    lexicon=new FSTLookup(lexiconStream,lexiconProperty);
+    InputStream ltsStream=MaryProperties.needStream(ltsProperty);
+    if (removetrailingonefromphonesProperty != null) {
+      this.removeTrailingOneFromPhones=MaryProperties.getBoolean(removetrailingonefromphonesProperty,true);
+    }
+    lts=new TrainedLTS(allophoneSet,ltsStream,this.removeTrailingOneFromPhones);
+  }
+  public MaryData process(  MaryData d) throws Exception {
+    Pattern p=Pattern.compile(MaryConstants.PUNCT_POS_REGEXP);
+    Document doc=d.getDocument();
+    NodeIterator it=MaryDomUtils.createNodeIterator(doc,doc,MaryXML.TOKEN);
+    Element t=null;
+    while ((t=(Element)it.nextNode()) != null) {
+      String text;
+      if (t.hasAttribute("ph") && !t.getAttribute("ph").contains("*")) {
+        continue;
+      }
+      if (t.hasAttribute("sounds_like"))       text=t.getAttribute("sounds_like");
+ else       text=MaryDomUtils.tokenText(t);
+      String pos=null;
+      boolean is_punct=false;
+      if (t.hasAttribute("pos")) {
+        pos=t.getAttribute("pos");
+        Matcher m=p.matcher(pos);
+        if (m.find()) {
+          is_punct=true;
+        }
+      }
+      if (text != null && !text.equals("") && !is_punct) {
+        StringBuilder ph=new StringBuilder();
+        String g2pMethod=null;
+        StringTokenizer st=new StringTokenizer(text," -");
+        while (st.hasMoreTokens()) {
+          String graph=st.nextToken();
+          StringBuilder helper=new StringBuilder();
+          String phon=phonemise(graph,pos,helper);
+          if (ph.length() == 0) {
+            g2pMethod=helper.toString();
+            ph.append(phon);
+          }
+ else {
+            ph.append(" - ");
+            ph.append(phon.replace('\'',','));
+          }
+        }
+        if (ph != null && ph.length() > 0) {
+          setPh(t,ph.toString());
+          t.setAttribute("g2p_method",g2pMethod);
+        }
+      }
+    }
+    MaryData result=new MaryData(outputType(),d.getLocale());
+    result.setDocument(doc);
+    return result;
+  }
+  public String phonemise(  String text,  String pos,  StringBuilder g2pMethod){
+    String result=userdictLookup(text,pos);
+    if (result != null) {
+      g2pMethod.append("userdict");
+      return result;
+    }
+    result=lexiconLookup(text,pos);
+    if (result != null) {
+      g2pMethod.append("lexicon");
+      return result;
+    }
+    String normalised=MaryUtils.normaliseUnicodeLetters(text,getLocale());
+    if (!normalised.equals(text)) {
+      result=userdictLookup(normalised,pos);
+      if (result != null) {
+        g2pMethod.append("userdict");
+        return result;
+      }
+      result=lexiconLookup(normalised,pos);
+      if (result != null) {
+        g2pMethod.append("lexicon");
+        return result;
+      }
+    }
+    String phones=lts.predictPronunciation(text);
+    try {
+      result=lts.syllabify(phones);
+    }
+ catch (    IllegalArgumentException e) {
+      logger.error(String.format("Problem with token <%s> [%s]: %s",text,phones,e.getMessage()));
+    }
+    if (result != null) {
+      g2pMethod.append("rules");
+      return result;
+    }
+    return null;
+  }
+  public String lexiconLookup(  String text,  String pos){
+    if (text == null || text.length() == 0)     return null;
+    String[] entries;
+    entries=lexiconLookupPrimitive(text,pos);
+    if (entries.length == 0) {
+      text=text.toLowerCase(getLocale());
+      entries=lexiconLookupPrimitive(text,pos);
+    }
+    if (entries.length == 0) {
+      text=text.substring(0,1).toUpperCase(getLocale()) + text.substring(1);
+      entries=lexiconLookupPrimitive(text,pos);
+    }
+    if (entries.length == 0)     return null;
+    return entries[0];
+  }
+  private String[] lexiconLookupPrimitive(  String text,  String pos){
+    String[] entries;
+    if (pos != null) {
+      entries=lexicon.lookup(text + pos);
+      if (entries.length == 0) {
+        entries=lexicon.lookup(text);
+      }
+    }
+ else {
+      entries=lexicon.lookup(text);
+    }
+    return entries;
+  }
+  public String userdictLookup(  String text,  String pos){
+    if (userdict == null || text == null || text.length() == 0)     return null;
+    List<String> entries=userdict.get(text);
+    if (entries == null) {
+      text=text.toLowerCase(getLocale());
+      entries=userdict.get(text);
+    }
+    if (entries == null) {
+      text=text.substring(0,1).toUpperCase(getLocale()) + text.substring(1);
+      entries=userdict.get(text);
+    }
+    if (entries == null)     return null;
+    String transcr=null;
+    for (    String entry : entries) {
+      String[] parts=entry.split("\\|");
+      transcr=parts[0];
+      if (parts.length > 1 && pos != null) {
+        StringTokenizer tokenizer=new StringTokenizer(entry);
+        while (tokenizer.hasMoreTokens()) {
+          String onePos=tokenizer.nextToken();
+          if (pos.equals(onePos))           return transcr;
+        }
+      }
+    }
+    return transcr;
+  }
+  public AllophoneSet getAllophoneSet(){
+    return allophoneSet;
+  }
+  protected Map<String,List<String>> readLexicon(  String lexiconFilename) throws IOException {
+    String line;
+    Map<String,List<String>> fLexicon=new HashMap<String,List<String>>();
+    BufferedReader lexiconFile=new BufferedReader(new InputStreamReader(new FileInputStream(lexiconFilename),"UTF-8"));
+    while ((line=lexiconFile.readLine()) != null) {
+      if (line.trim().equals("") || line.startsWith("#"))       continue;
+      String[] lineParts=line.split("\\s*\\|\\s*");
+      String graphStr=lineParts[0];
+      String phonStr=lineParts[1];
+      try {
+        allophoneSet.splitIntoAllophones(phonStr);
+      }
+ catch (      RuntimeException re) {
+        logger.warn("Lexicon '" + lexiconFilename + "': invalid entry for '"+ graphStr+ "'",re);
+      }
+      String phonPosStr=phonStr;
+      if (lineParts.length > 2) {
+        String pos=lineParts[2];
+        if (!pos.trim().equals(""))         phonPosStr+="|" + pos;
+      }
+      List<String> transcriptions=fLexicon.get(graphStr);
+      if (null == transcriptions) {
+        transcriptions=new ArrayList<String>();
+        fLexicon.put(graphStr,transcriptions);
+      }
+      transcriptions.add(phonPosStr);
+    }
+    lexiconFile.close();
+    return fLexicon;
+  }
+  protected void setPh(  Element t,  String ph){
+    if (!t.getTagName().equals(MaryXML.TOKEN))     throw new DOMException(DOMException.INVALID_ACCESS_ERR,"Only t elements allowed, received " + t.getTagName() + ".");
+    if (t.hasAttribute("ph")) {
+      String prevPh=t.getAttribute("ph");
+      String newPh=prevPh.replaceFirst("\\*",ph);
+      t.setAttribute("ph",newPh);
+    }
+ else {
+      t.setAttribute("ph",ph);
+    }
+  }
+}

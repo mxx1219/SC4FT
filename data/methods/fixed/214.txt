@@ -1,0 +1,3 @@
+public static double tile2lon(int x,int aZoom){
+  return ((double)x / (1 << aZoom) * 360.0) - 180;
+}

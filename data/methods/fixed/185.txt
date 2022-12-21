@@ -1,0 +1,16 @@
+public List<Long> executeSingleSimulation(){
+  StealingSleeper stealingSleeper=new StealingSleeper();
+  SleepingBackOffPolicy<?> stealingBackoff=backOffPolicy.withSleeper(stealingSleeper);
+  RetryTemplate template=new RetryTemplate();
+  template.setBackOffPolicy(stealingBackoff);
+  template.setRetryPolicy(retryPolicy);
+  try {
+    template.execute(new FailingRetryCallback());
+  }
+ catch (  FailingRetryException e) {
+  }
+catch (  Throwable e) {
+    throw new RuntimeException("Unexpected exception",e);
+  }
+  return stealingSleeper.getSleeps();
+}

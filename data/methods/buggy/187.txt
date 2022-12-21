@@ -1,0 +1,46 @@
+public RuntimeDescriptor start(WorkspaceImpl workspace,String envName,boolean recover) throws ServerException, ConflictException, NotFoundException {
+  String workspaceId=workspace.getId();
+  EnvironmentImpl environment=workspace.getConfig().getEnvironments().get(envName);
+  if (environment == null) {
+    throw new IllegalArgumentException(format("Workspace '%s' doesn't contain environment '%s'",workspaceId,envName));
+  }
+  EnvironmentImpl environmentCopy=new EnvironmentImpl(environment);
+  ensurePreDestroyIsNotExecuted();
+  try (StripedLocks.WriteLock lock=stripedLocks.acquireWriteLock(workspaceId)){
+    ensurePreDestroyIsNotExecuted();
+    WorkspaceState workspaceState=workspaces.get(workspaceId);
+    if (workspaceState != null) {
+      throw new ConflictException(format("Could not start workspace '%s' because its status is '%s'",workspace.getConfig().getName(),workspaceState.status));
+    }
+    workspaces.put(workspaceId,new WorkspaceState(WorkspaceStatus.STARTING,envName));
+  }
+   ensurePreDestroyIsNotExecuted();
+  publishWorkspaceEvent(EventType.STARTING,workspaceId,null);
+  try {
+    List<Instance> machines=environmentEngine.start(workspaceId,envName,environmentCopy,recover,getEnvironmentLogger(workspaceId));
+    Instance devMachine=getDevMachine(machines);
+    wsAgentLauncher.startWsAgent(devMachine);
+    try (StripedLocks.WriteLock lock=stripedLocks.acquireWriteLock(workspaceId)){
+      WorkspaceState workspaceState=workspaces.get(workspaceId);
+      workspaceState.status=WorkspaceStatus.RUNNING;
+    }
+     publishWorkspaceEvent(EventType.RUNNING,workspaceId,null);
+    return get(workspaceId);
+  }
+ catch (  ApiException e) {
+    try {
+      environmentEngine.stop(workspaceId);
+    }
+ catch (    EnvironmentNotRunningException ignore) {
+    }
+catch (    Exception ex) {
+      LOG.error(ex.getLocalizedMessage(),ex);
+    }
+    String environmentStartError="Start of environment " + envName + " failed. Error: "+ e.getLocalizedMessage();
+    try (StripedLocks.WriteLock lock=stripedLocks.acquireWriteLock(workspaceId)){
+      workspaces.remove(workspaceId);
+    }
+     publishWorkspaceEvent(EventType.ERROR,workspaceId,environmentStartError);
+    throw new ServerException(environmentStartError,e);
+  }
+}

@@ -1,0 +1,9 @@
+@Test public void hasComponentPermission_on_branch_checks_permissions_of_its_project(){
+  ComponentDto branch=db.components().insertProjectBranch(privateProject,null);
+  ComponentDto fileInBranch=db.components().insertComponent(newChildComponent("fileUuid",branch,branch));
+  db.users().insertProjectPermissionOnUser(user,"p1",privateProject);
+  UserSession underTest=newUserSession(user);
+  assertThat(hasComponentPermissionByDtoOrUuid(underTest,"p1",privateProject)).isTrue();
+  assertThat(hasComponentPermissionByDtoOrUuid(underTest,"p1",branch)).isTrue();
+  assertThat(hasComponentPermissionByDtoOrUuid(underTest,"p1",fileInBranch)).isTrue();
+}

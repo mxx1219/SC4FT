@@ -1,0 +1,16 @@
+private boolean checkSortColsAndJoinCols(List<Order> sortCols,List<String> joinCols,List<Order> sortColumnsFirstPartition){
+  if (sortCols == null || sortCols.size() < joinCols.size()) {
+    return false;
+  }
+  List<String> sortColNames=new ArrayList<String>();
+  for (int pos=0; pos < sortCols.size(); pos++) {
+    Order o=sortCols.get(pos);
+    if (pos < sortColumnsFirstPartition.size()) {
+      if (o.getOrder() != sortColumnsFirstPartition.get(pos).getOrder()) {
+        return false;
+      }
+    }
+    sortColNames.add(o.getCol());
+  }
+  return sortColNames.subList(0,joinCols.size()).containsAll(joinCols);
+}

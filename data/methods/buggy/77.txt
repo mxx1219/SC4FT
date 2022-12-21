@@ -1,0 +1,23 @@
+public void shortcutReceived(GlobalShortcutEvent evt){
+  AWTKeyStroke keystroke=evt.getKeyStroke();
+  GlobalKeybindingSet set=keybindingsService.getGlobalBindings();
+  for (  Map.Entry<String,List<AWTKeyStroke>> entry : set.getBindings().entrySet()) {
+    for (    AWTKeyStroke ks : entry.getValue()) {
+      if (entry.getKey().equals("contactlist") && keystroke.getKeyCode() == ks.getKeyCode() && keystroke.getModifiers() == ks.getModifiers()) {
+        ExportedWindow window=GlobalShortcutActivator.getUIService().getExportedWindow(ExportedWindow.MAIN_WINDOW);
+        if (window == null)         return;
+        if (!window.isVisible()) {
+          window.bringToFront();
+          window.setVisible(true);
+          if (window instanceof Window) {
+            ((Window)window).setAlwaysOnTop(true);
+            ((Window)window).setAlwaysOnTop(false);
+          }
+        }
+ else {
+          window.setVisible(false);
+        }
+      }
+    }
+  }
+}

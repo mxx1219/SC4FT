@@ -1,0 +1,7 @@
+@Override public ProcessContext execute(ProcessContext context) throws Exception {
+  ProcessContext subContext=workflow.doActivities(((SimplePaymentContext)context).getSeedData());
+  if (subContext.isStopped()) {
+    context.stopProcess();
+  }
+  return context;
+}

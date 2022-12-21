@@ -1,0 +1,36 @@
+package com.hazelcast.map.writebehind;
+abstract class AbstractDelayedEntry<K> {
+  private final K key;
+  private final long storeTime;
+  private final int partitionId;
+  protected AbstractDelayedEntry(  K key,  long storeTime,  int partitionId){
+    this.key=key;
+    this.storeTime=storeTime;
+    this.partitionId=partitionId;
+  }
+  public K getKey(){
+    return key;
+  }
+  public long getStoreTime(){
+    return storeTime;
+  }
+  public int getPartitionId(){
+    return partitionId;
+  }
+  @Override public boolean equals(  Object obj){
+    if (this == obj) {
+      return true;
+    }
+    if (getClass() != obj.getClass()) {
+      return false;
+    }
+    final AbstractDelayedEntry delayedEntry=(AbstractDelayedEntry)obj;
+    if (key == null) {
+      return false;
+    }
+    return key.equals(delayedEntry.getKey());
+  }
+  @Override public int hashCode(){
+    return key.hashCode();
+  }
+}

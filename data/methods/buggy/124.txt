@@ -1,0 +1,32 @@
+public void parse(final InsertStatement insertStatement){
+  if (!lexerEngine.skipIfEqual(getCustomizedInsertKeywords())) {
+    return;
+  }
+  removeUnnecessaryToken(insertStatement);
+  Optional<InsertValuesToken> insertValuesToken=insertStatement.findSQLToken(InsertValuesToken.class);
+  Preconditions.checkState(insertValuesToken.isPresent());
+  insertStatement.getSQLTokens().remove(insertValuesToken.get());
+  insertStatement.addSQLToken(new InsertSetToken(insertValuesToken.get().getStartIndex()));
+  do {
+    SQLExpression left=basicExpressionParser.parse(insertStatement);
+    Column column=null;
+    if (left instanceof SQLPropertyExpression) {
+      column=new Column(SQLUtil.getExactlyValue(((SQLPropertyExpression)left).getName()),insertStatement.getTables().getSingleTableName());
+    }
+    if (left instanceof SQLIdentifierExpression) {
+      column=new Column(SQLUtil.getExactlyValue(((SQLIdentifierExpression)left).getName()),insertStatement.getTables().getSingleTableName());
+    }
+    if (left instanceof SQLIgnoreExpression) {
+      column=new Column(SQLUtil.getExactlyValue(((SQLIgnoreExpression)left).getExpression()),insertStatement.getTables().getSingleTableName());
+    }
+    Preconditions.checkNotNull(column);
+    lexerEngine.accept(Symbol.EQ);
+    SQLExpression right=basicExpressionParser.parse(insertStatement);
+    if (shardingRule.isShardingColumn(column.getName(),column.getTableName()) && (right instanceof SQLNumberExpression || right instanceof SQLTextExpression || right instanceof SQLPlaceholderExpression)) {
+      insertStatement.getRouteConditions().add(new Condition(column,right));
+    }
+  }
+ while (lexerEngine.skipIfEqual(Symbol.COMMA));
+  InsertValue insertValue=new InsertValue(insertStatement.getParametersIndex(),new LinkedList<SQLExpression>());
+  insertStatement.getValues().add(insertValue);
+}

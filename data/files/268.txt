@@ -1,0 +1,25 @@
+package org.rapidoid.pages.bootstrap;
+import org.rapidoid.html.Tag;
+import org.rapidoid.html.TagContext;
+import org.rapidoid.html.Tags;
+import org.rapidoid.model.Items;
+import org.rapidoid.model.Model;
+import org.rapidoid.pages.BootstrapWidgets;
+import org.rapidoid.pages.PagesTestCommons;
+import org.rapidoid.pages.entity.Person;
+import org.testng.annotations.Test;
+public class TableWidgetTest extends PagesTestCommons {
+  @Test public void testTableWidget(){
+    TagContext ctx=Tags.context();
+    mockExchange(ctx);
+    Items items=Model.beanItemsInfer(new Person("John",20),new Person("Rambo",50));
+    Tag<?> table=BootstrapWidgets.grid(items,null,10);
+    print(ctx,table);
+    hasRegex(ctx,table,"<th[^>]*?>Name</th>");
+    hasRegex(ctx,table,"<th[^>]*?>Age</th>");
+    hasRegex(ctx,table,"<td[^>]*?>John</td>");
+    hasRegex(ctx,table,"<td[^>]*?>20</td>");
+    hasRegex(ctx,table,"<td[^>]*?>Rambo</td>");
+    hasRegex(ctx,table,"<td[^>]*?>50</td>");
+  }
+}

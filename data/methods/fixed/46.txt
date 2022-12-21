@@ -1,0 +1,8 @@
+public static void sortIfNecessary(Object value){
+  if (value instanceof Object[]) {
+    sort((Object[])value);
+  }
+ else   if (value instanceof List) {
+    sort((List<?>)value);
+  }
+}

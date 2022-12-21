@@ -1,0 +1,10 @@
+public DummyXaDataSource(java.util.Map<?,?> map) throws InstantiationException {
+  super(map);
+  try {
+    xaContainer=XaContainer.create("dummy_resource",new DummyCommandFactory(),new DummyTransactionFactory(),null);
+    xaContainer.openLogicalLog();
+  }
+ catch (  IOException e) {
+    throw new InstantiationException("" + e);
+  }
+}

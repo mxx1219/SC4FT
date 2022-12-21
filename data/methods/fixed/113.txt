@@ -1,0 +1,84 @@
+private void processIndexShardSnapshots(SnapshotMetaData snapshotMetaData){
+  Map<SnapshotId,SnapshotShards> survivors=newHashMap();
+  for (  Map.Entry<SnapshotId,SnapshotShards> entry : shardSnapshots.entrySet()) {
+    if (snapshotMetaData != null && snapshotMetaData.snapshot(entry.getKey()) != null) {
+      survivors.put(entry.getKey(),entry.getValue());
+    }
+  }
+  Map<SnapshotId,Map<ShardId,IndexShardSnapshotStatus>> newSnapshots=newHashMap();
+  final String localNodeId=clusterService.localNode().id();
+  if (snapshotMetaData != null) {
+    for (    SnapshotMetaData.Entry entry : snapshotMetaData.entries()) {
+      if (entry.state() == State.STARTED) {
+        Map<ShardId,IndexShardSnapshotStatus> startedShards=newHashMap();
+        SnapshotShards snapshotShards=shardSnapshots.get(entry.snapshotId());
+        for (        Map.Entry<ShardId,SnapshotMetaData.ShardSnapshotStatus> shard : entry.shards().entrySet()) {
+          if (localNodeId.equals(shard.getValue().nodeId())) {
+            if (shard.getValue().state() == State.INIT && (snapshotShards == null || !snapshotShards.shards.containsKey(shard.getKey()))) {
+              logger.trace("[{}] - Adding shard to the queue",shard.getKey());
+              startedShards.put(shard.getKey(),new IndexShardSnapshotStatus());
+            }
+          }
+        }
+        if (!startedShards.isEmpty()) {
+          newSnapshots.put(entry.snapshotId(),startedShards);
+          if (snapshotShards != null) {
+            ImmutableMap.Builder<ShardId,IndexShardSnapshotStatus> shards=ImmutableMap.builder();
+            shards.putAll(snapshotShards.shards);
+            shards.putAll(startedShards);
+            survivors.put(entry.snapshotId(),new SnapshotShards(shards.build()));
+          }
+ else {
+            survivors.put(entry.snapshotId(),new SnapshotShards(ImmutableMap.copyOf(startedShards)));
+          }
+        }
+      }
+ else       if (entry.state() == State.ABORTED) {
+        SnapshotShards snapshotShards=shardSnapshots.get(entry.snapshotId());
+        if (snapshotShards != null) {
+          for (          Map.Entry<ShardId,SnapshotMetaData.ShardSnapshotStatus> shard : entry.shards().entrySet()) {
+            IndexShardSnapshotStatus snapshotStatus=snapshotShards.shards.get(shard.getKey());
+            if (snapshotStatus != null) {
+              snapshotStatus.abort();
+            }
+          }
+        }
+      }
+    }
+  }
+  shutdownLock.lock();
+  try {
+    shardSnapshots=ImmutableMap.copyOf(survivors);
+    if (shardSnapshots.isEmpty()) {
+      shutdownCondition.signalAll();
+    }
+  }
+  finally {
+    shutdownLock.unlock();
+  }
+  if (!newSnapshots.isEmpty()) {
+    for (    final Map.Entry<SnapshotId,Map<ShardId,IndexShardSnapshotStatus>> entry : newSnapshots.entrySet()) {
+      for (      final Map.Entry<ShardId,IndexShardSnapshotStatus> shardEntry : entry.getValue().entrySet()) {
+        try {
+          final IndexShardSnapshotAndRestoreService shardSnapshotService=indicesService.indexServiceSafe(shardEntry.getKey().getIndex()).shardInjectorSafe(shardEntry.getKey().id()).getInstance(IndexShardSnapshotAndRestoreService.class);
+          threadPool.executor(ThreadPool.Names.SNAPSHOT).execute(new Runnable(){
+            @Override public void run(){
+              try {
+                shardSnapshotService.snapshot(entry.getKey(),shardEntry.getValue());
+                updateIndexShardSnapshotStatus(new UpdateIndexShardSnapshotStatusRequest(entry.getKey(),shardEntry.getKey(),new ShardSnapshotStatus(localNodeId,SnapshotMetaData.State.SUCCESS)));
+              }
+ catch (              Throwable t) {
+                logger.warn("[{}] [{}] failed to create snapshot",t,shardEntry.getKey(),entry.getKey());
+                updateIndexShardSnapshotStatus(new UpdateIndexShardSnapshotStatusRequest(entry.getKey(),shardEntry.getKey(),new ShardSnapshotStatus(localNodeId,SnapshotMetaData.State.FAILED,ExceptionsHelper.detailedMessage(t))));
+              }
+            }
+          }
+);
+        }
+ catch (        Throwable t) {
+          updateIndexShardSnapshotStatus(new UpdateIndexShardSnapshotStatusRequest(entry.getKey(),shardEntry.getKey(),new ShardSnapshotStatus(localNodeId,SnapshotMetaData.State.FAILED,ExceptionsHelper.detailedMessage(t))));
+        }
+      }
+    }
+  }
+}

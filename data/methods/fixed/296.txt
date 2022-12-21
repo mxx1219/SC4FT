@@ -1,0 +1,3 @@
+@Override public String toString(){
+  return new StringBuilder().append("triggerName: ").append(getTriggerName()).append("timestamp: ").append(timeStamp).append(", transactionId: ").append(transactionId).append(", blockHash: ").append(blockHash).append(", blockNumber: ").append(blockNumber).append(", energyUsage: ").append(energyUsage).append(", energyFee: ").append(energyFee).append(", originEnergyUsage: ").append(originEnergyUsage).append(", energyUsageTotal: ").append(energyUsageTotal).append(", netUsage: ").append(netUsage).append(", netFee: ").append(netFee).append(", internalTransactionPojos: ").append(internalTransactionPojos).toString();
+}

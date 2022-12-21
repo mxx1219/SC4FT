@@ -1,0 +1,12 @@
+private OClass getLinkInfo(final ODatabaseComplexInternal<?> iDatabase,final String iFieldClassName){
+  if (iDatabase == null || iDatabase.isClosed() || iFieldClassName == null)   return null;
+  OClass linkedClass=iDatabase.getMetadata().getImmutableSchemaSnapshot().getClass(iFieldClassName);
+  if (iDatabase.getDatabaseOwner() instanceof ODatabaseObject) {
+    ODatabaseObject dbo=(ODatabaseObject)iDatabase.getDatabaseOwner();
+    if (linkedClass == null) {
+      Class<?> entityClass=dbo.getEntityManager().getEntityClass(iFieldClassName);
+      if (entityClass != null)       linkedClass=iDatabase.getMetadata().getSchema().createClass(iFieldClassName);
+    }
+  }
+  return linkedClass;
+}

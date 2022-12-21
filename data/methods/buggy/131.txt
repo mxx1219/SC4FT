@@ -1,0 +1,4 @@
+@Override public void onItemClick(AdapterView<?> parent,View view,int position,long id){
+  super.onItemClick(parent,view,position,id);
+  TimelineDetailPagerFragment.launch(getActivity(),getAdapterItems().get(position));
+}

@@ -1,0 +1,5 @@
+@Before @Override public void setup(){
+  super.setup();
+  FacebookSdk.setApplicationId("123456789");
+  FacebookSdk.sdkInitialize(RuntimeEnvironment.application);
+}

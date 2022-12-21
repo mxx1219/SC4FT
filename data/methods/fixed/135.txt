@@ -1,0 +1,5 @@
+@Override public void onBindViewHolder(RoomDirectoryAdapter.RoomDirectoryViewHolder viewHolder,int position){
+  if (position < mList.size()) {
+    viewHolder.populateViews(mList.get(position));
+  }
+}

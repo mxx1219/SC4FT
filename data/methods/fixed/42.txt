@@ -1,0 +1,36 @@
+void invalidateChildRegion(View v){
+  if (Build.VERSION.SDK_INT >= 17) {
+    ViewCompat.setLayerPaint(v,((LayoutParams)v.getLayoutParams()).dimPaint);
+    return;
+  }
+  if (Build.VERSION.SDK_INT >= 16) {
+    if (!mDisplayListReflectionLoaded) {
+      try {
+        mGetDisplayList=View.class.getDeclaredMethod("getDisplayList",(Class<?>[])null);
+      }
+ catch (      NoSuchMethodException e) {
+        Log.e(TAG,"Couldn't fetch getDisplayList method; dimming won't work right.",e);
+      }
+      try {
+        mRecreateDisplayList=View.class.getDeclaredField("mRecreateDisplayList");
+        mRecreateDisplayList.setAccessible(true);
+      }
+ catch (      NoSuchFieldException e) {
+        Log.e(TAG,"Couldn't fetch mRecreateDisplayList field; dimming will be slow.",e);
+      }
+      mDisplayListReflectionLoaded=true;
+    }
+    if (mGetDisplayList == null || mRecreateDisplayList == null) {
+      v.invalidate();
+      return;
+    }
+    try {
+      mRecreateDisplayList.setBoolean(v,true);
+      mGetDisplayList.invoke(v,(Object[])null);
+    }
+ catch (    Exception e) {
+      Log.e(TAG,"Error refreshing display list state",e);
+    }
+  }
+  ViewCompat.postInvalidateOnAnimation(this,v.getLeft(),v.getTop(),v.getRight(),v.getBottom());
+}

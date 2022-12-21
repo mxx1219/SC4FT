@@ -1,0 +1,239 @@
+package com.esotericsoftware.kryonet;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.net.SocketAddress;
+import java.net.SocketException;
+import java.nio.channels.SocketChannel;
+import com.esotericsoftware.kryo.Kryo;
+import com.esotericsoftware.kryonet.FrameworkMessage.Ping;
+import com.esotericsoftware.minlog.Log.*;
+public class Connection {
+  int id=-1;
+  private String name;
+  EndPoint endPoint;
+  TcpConnection tcp;
+  UdpConnection udp;
+  InetSocketAddress udpRemoteAddress;
+  private Listener[] listeners={};
+  private Object listenerLock=new Object();
+  private int lastPingID;
+  private long lastPingSendTime;
+  private int returnTripTime;
+  volatile boolean isConnected;
+  protected Connection(){
+  }
+  void initialize(  Serialization serialization,  int writeBufferSize,  int objectBufferSize){
+    tcp=new TcpConnection(serialization,writeBufferSize,objectBufferSize);
+  }
+  public int getID(){
+    return id;
+  }
+  public boolean isConnected(){
+    return isConnected;
+  }
+  public int sendTCP(  Object object){
+    if (object == null)     throw new IllegalArgumentException("object cannot be null.");
+    try {
+      int length=tcp.send(this,object);
+      if (length == 0) {
+        if (TRACE)         trace("kryonet",this + " TCP had nothing to send.");
+      }
+ else       if (DEBUG) {
+        String objectString=object == null ? "null" : object.getClass().getSimpleName();
+        if (!(object instanceof FrameworkMessage)) {
+          debug("kryonet",this + " sent TCP: " + objectString+ " ("+ length+ ")");
+        }
+ else         if (TRACE) {
+          trace("kryonet",this + " sent TCP: " + objectString+ " ("+ length+ ")");
+        }
+      }
+      return length;
+    }
+ catch (    IOException ex) {
+      if (DEBUG)       debug("kryonet","Unable to send TCP with connection: " + this,ex);
+      close();
+      return 0;
+    }
+catch (    KryoNetException ex) {
+      if (ERROR)       error("kryonet","Unable to send TCP with connection: " + this,ex);
+      close();
+      return 0;
+    }
+  }
+  public int sendUDP(  Object object){
+    if (object == null)     throw new IllegalArgumentException("object cannot be null.");
+    SocketAddress address=udpRemoteAddress;
+    if (address == null && udp != null)     address=udp.connectedAddress;
+    if (address == null && isConnected)     throw new IllegalStateException("Connection is not connected via UDP.");
+    try {
+      if (address == null)       throw new SocketException("Connection is closed.");
+      int length=udp.send(this,object,address);
+      if (length == 0) {
+        if (TRACE)         trace("kryonet",this + " UDP had nothing to send.");
+      }
+ else       if (DEBUG) {
+        if (length != -1) {
+          String objectString=object == null ? "null" : object.getClass().getSimpleName();
+          if (!(object instanceof FrameworkMessage)) {
+            debug("kryonet",this + " sent UDP: " + objectString+ " ("+ length+ ")");
+          }
+ else           if (TRACE) {
+            trace("kryonet",this + " sent UDP: " + objectString+ " ("+ length+ ")");
+          }
+        }
+ else         debug("kryonet",this + " was unable to send, UDP socket buffer full.");
+      }
+      return length;
+    }
+ catch (    IOException ex) {
+      if (DEBUG)       debug("kryonet","Unable to send UDP with connection: " + this,ex);
+      close();
+      return 0;
+    }
+catch (    KryoNetException ex) {
+      if (ERROR)       error("kryonet","Unable to send UDP with connection: " + this,ex);
+      close();
+      return 0;
+    }
+  }
+  public void close(){
+    boolean wasConnected=isConnected;
+    isConnected=false;
+    tcp.close();
+    if (udp != null && udp.connectedAddress != null)     udp.close();
+    if (wasConnected) {
+      notifyDisconnected();
+      if (INFO)       info("kryonet",this + " disconnected.");
+    }
+    setConnected(false);
+  }
+  public void updateReturnTripTime(){
+    Ping ping=new Ping();
+    ping.id=lastPingID++;
+    lastPingSendTime=System.currentTimeMillis();
+    sendTCP(ping);
+  }
+  public int getReturnTripTime(){
+    return returnTripTime;
+  }
+  public void setKeepAliveTCP(  int keepAliveMillis){
+    tcp.keepAliveMillis=keepAliveMillis;
+  }
+  public void setTimeout(  int timeoutMillis){
+    tcp.timeoutMillis=timeoutMillis;
+  }
+  public void addListener(  Listener listener){
+    if (listener == null)     throw new IllegalArgumentException("listener cannot be null.");
+synchronized (listenerLock) {
+      Listener[] listeners=this.listeners;
+      int n=listeners.length;
+      for (int i=0; i < n; i++)       if (listener == listeners[i])       return;
+      Listener[] newListeners=new Listener[n + 1];
+      newListeners[0]=listener;
+      System.arraycopy(listeners,0,newListeners,1,n);
+      this.listeners=newListeners;
+    }
+    if (TRACE)     trace("kryonet","Connection listener added: " + listener.getClass().getName());
+  }
+  public void removeListener(  Listener listener){
+    if (listener == null)     throw new IllegalArgumentException("listener cannot be null.");
+synchronized (listenerLock) {
+      Listener[] listeners=this.listeners;
+      int n=listeners.length;
+      if (n == 0)       return;
+      Listener[] newListeners=new Listener[n - 1];
+      for (int i=0, ii=0; i < n; i++) {
+        Listener copyListener=listeners[i];
+        if (listener == copyListener)         continue;
+        if (ii == n - 1)         return;
+        newListeners[ii++]=copyListener;
+      }
+      this.listeners=newListeners;
+    }
+    if (TRACE)     trace("kryonet","Connection listener removed: " + listener.getClass().getName());
+  }
+  void notifyConnected(){
+    if (INFO) {
+      SocketChannel socketChannel=tcp.socketChannel;
+      if (socketChannel != null) {
+        Socket socket=tcp.socketChannel.socket();
+        if (socket != null) {
+          InetSocketAddress remoteSocketAddress=(InetSocketAddress)socket.getRemoteSocketAddress();
+          if (remoteSocketAddress != null)           info("kryonet",this + " connected: " + remoteSocketAddress.getAddress());
+        }
+      }
+    }
+    Listener[] listeners=this.listeners;
+    for (int i=0, n=listeners.length; i < n; i++)     listeners[i].connected(this);
+  }
+  void notifyDisconnected(){
+    Listener[] listeners=this.listeners;
+    for (int i=0, n=listeners.length; i < n; i++)     listeners[i].disconnected(this);
+  }
+  void notifyIdle(){
+    Listener[] listeners=this.listeners;
+    for (int i=0, n=listeners.length; i < n; i++) {
+      listeners[i].idle(this);
+      if (!isIdle())       break;
+    }
+  }
+  void notifyReceived(  Object object){
+    if (object instanceof Ping) {
+      Ping ping=(Ping)object;
+      if (ping.isReply) {
+        if (ping.id == lastPingID - 1) {
+          returnTripTime=(int)(System.currentTimeMillis() - lastPingSendTime);
+          if (TRACE)           trace("kryonet",this + " return trip time: " + returnTripTime);
+        }
+      }
+ else {
+        ping.isReply=true;
+        sendTCP(ping);
+      }
+    }
+    Listener[] listeners=this.listeners;
+    for (int i=0, n=listeners.length; i < n; i++)     listeners[i].received(this,object);
+  }
+  public EndPoint getEndPoint(){
+    return endPoint;
+  }
+  public InetSocketAddress getRemoteAddressTCP(){
+    SocketChannel socketChannel=tcp.socketChannel;
+    if (socketChannel != null) {
+      Socket socket=tcp.socketChannel.socket();
+      if (socket != null) {
+        return (InetSocketAddress)socket.getRemoteSocketAddress();
+      }
+    }
+    return null;
+  }
+  public InetSocketAddress getRemoteAddressUDP(){
+    InetSocketAddress connectedAddress=udp.connectedAddress;
+    if (connectedAddress != null)     return connectedAddress;
+    return udpRemoteAddress;
+  }
+  public void setBufferPositionFix(  boolean bufferPositionFix){
+    tcp.bufferPositionFix=bufferPositionFix;
+  }
+  public void setName(  String name){
+    this.name=name;
+  }
+  public int getTcpWriteBufferSize(){
+    return tcp.writeBuffer.position();
+  }
+  public boolean isIdle(){
+    return tcp.writeBuffer.position() / tcp.writeBuffer.capacity() < tcp.idleThreshold;
+  }
+  public void setIdleThreshold(  float idleThreshold){
+    tcp.idleThreshold=idleThreshold;
+  }
+  public String toString(){
+    if (name != null)     return name;
+    return "Connection " + id;
+  }
+  void setConnected(  boolean isConnected){
+    this.isConnected=isConnected;
+    if (isConnected && name == null)     name="Connection " + id;
+  }
+}

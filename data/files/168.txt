@@ -1,0 +1,536 @@
+package org.elasticsearch.cluster.routing.allocation.allocator;
+import org.apache.logging.log4j.Logger;
+import org.apache.lucene.util.ArrayUtil;
+import org.apache.lucene.util.IntroSorter;
+import org.elasticsearch.cluster.metadata.IndexMetaData;
+import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.node.DiscoveryNode;
+import org.elasticsearch.cluster.routing.RoutingNode;
+import org.elasticsearch.cluster.routing.RoutingNodes;
+import org.elasticsearch.cluster.routing.ShardRouting;
+import org.elasticsearch.cluster.routing.ShardRoutingState;
+import org.elasticsearch.cluster.routing.UnassignedInfo.AllocationStatus;
+import org.elasticsearch.cluster.routing.allocation.AllocateUnassignedDecision;
+import org.elasticsearch.cluster.routing.allocation.AllocationDecision;
+import org.elasticsearch.cluster.routing.allocation.MoveDecision;
+import org.elasticsearch.cluster.routing.allocation.NodeAllocationResult;
+import org.elasticsearch.cluster.routing.allocation.RoutingAllocation;
+import org.elasticsearch.cluster.routing.allocation.ShardAllocationDecision;
+import org.elasticsearch.cluster.routing.allocation.decider.AllocationDeciders;
+import org.elasticsearch.cluster.routing.allocation.decider.Decision;
+import org.elasticsearch.cluster.routing.allocation.decider.Decision.Type;
+import org.elasticsearch.cluster.routing.allocation.decider.DiskThresholdDecider;
+import org.elasticsearch.common.collect.Tuple;
+import org.elasticsearch.common.component.AbstractComponent;
+import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.settings.ClusterSettings;
+import org.elasticsearch.common.settings.Setting;
+import org.elasticsearch.common.settings.Setting.Property;
+import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.util.set.Sets;
+import org.elasticsearch.gateway.PriorityComparator;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import org.elasticsearch.cluster.routing.ShardRoutingState.RELOCATING;
+public class BalancedShardsAllocator extends AbstractComponent implements ShardsAllocator {
+  public static final Setting<Float> INDEX_BALANCE_FACTOR_SETTING=Setting.floatSetting("cluster.routing.allocation.balance.index",0.55f,0.0f,Property.Dynamic,Property.NodeScope);
+  public static final Setting<Float> SHARD_BALANCE_FACTOR_SETTING=Setting.floatSetting("cluster.routing.allocation.balance.shard",0.45f,0.0f,Property.Dynamic,Property.NodeScope);
+  public static final Setting<Float> THRESHOLD_SETTING=Setting.floatSetting("cluster.routing.allocation.balance.threshold",1.0f,0.0f,Property.Dynamic,Property.NodeScope);
+  private volatile WeightFunction weightFunction;
+  private volatile float threshold;
+  public BalancedShardsAllocator(  Settings settings){
+    this(settings,new ClusterSettings(settings,ClusterSettings.BUILT_IN_CLUSTER_SETTINGS));
+  }
+  @Inject public BalancedShardsAllocator(  Settings settings,  ClusterSettings clusterSettings){
+    super(settings);
+    setWeightFunction(INDEX_BALANCE_FACTOR_SETTING.get(settings),SHARD_BALANCE_FACTOR_SETTING.get(settings));
+    setThreshold(THRESHOLD_SETTING.get(settings));
+    clusterSettings.addSettingsUpdateConsumer(INDEX_BALANCE_FACTOR_SETTING,SHARD_BALANCE_FACTOR_SETTING,null);
+    clusterSettings.addSettingsUpdateConsumer(THRESHOLD_SETTING,null);
+  }
+  private void setWeightFunction(  float indexBalance,  float shardBalanceFactor){
+    weightFunction=new WeightFunction(indexBalance,shardBalanceFactor);
+  }
+  private void setThreshold(  float threshold){
+    this.threshold=threshold;
+  }
+  @Override public void allocate(  RoutingAllocation allocation){
+    if (allocation.routingNodes().size() == 0) {
+      return;
+    }
+    final Balancer balancer=new Balancer(logger,allocation,weightFunction,threshold);
+    balancer.allocateUnassigned();
+    balancer.moveShards();
+    balancer.balance();
+  }
+  @Override public ShardAllocationDecision decideShardAllocation(  final ShardRouting shard,  final RoutingAllocation allocation){
+    Balancer balancer=new Balancer(logger,allocation,weightFunction,threshold);
+    AllocateUnassignedDecision allocateUnassignedDecision=AllocateUnassignedDecision.NOT_TAKEN;
+    MoveDecision moveDecision=MoveDecision.NOT_TAKEN;
+    if (shard.unassigned()) {
+      allocateUnassignedDecision=balancer.decideAllocateUnassigned(shard,Sets.newHashSet());
+    }
+ else {
+      moveDecision=balancer.decideMove(shard);
+      if (moveDecision.isDecisionTaken() && moveDecision.canRemain()) {
+        MoveDecision rebalanceDecision=balancer.decideRebalance(shard);
+        moveDecision=rebalanceDecision.withRemainDecision(moveDecision.getCanRemainDecision());
+      }
+    }
+    return new ShardAllocationDecision(allocateUnassignedDecision,moveDecision);
+  }
+  public float getThreshold(){
+    return threshold;
+  }
+  public float getIndexBalance(){
+    return weightFunction.indexBalance;
+  }
+  public float getShardBalance(){
+    return weightFunction.shardBalance;
+  }
+public static class WeightFunction {
+    private final float indexBalance;
+    private final float shardBalance;
+    private final float theta0;
+    private final float theta1;
+    public WeightFunction(    float indexBalance,    float shardBalance){
+      float sum=indexBalance + shardBalance;
+      if (sum <= 0.0f) {
+        throw new IllegalArgumentException("Balance factors must sum to a value > 0 but was: " + sum);
+      }
+      theta0=shardBalance / sum;
+      theta1=indexBalance / sum;
+      this.indexBalance=indexBalance;
+      this.shardBalance=shardBalance;
+    }
+    public float weight(    Balancer balancer,    ModelNode node,    String index){
+      return weight(balancer,node,index,0);
+    }
+    public float weightShardAdded(    Balancer balancer,    ModelNode node,    String index){
+      return weight(balancer,node,index,1);
+    }
+    public float weightShardRemoved(    Balancer balancer,    ModelNode node,    String index){
+      return weight(balancer,node,index,-1);
+    }
+    private float weight(    Balancer balancer,    ModelNode node,    String index,    int numAdditionalShards){
+      final float weightShard=node.numShards() + numAdditionalShards - balancer.avgShardsPerNode();
+      final float weightIndex=node.numShards(index) + numAdditionalShards - balancer.avgShardsPerNode(index);
+      return theta0 * weightShard + theta1 * weightIndex;
+    }
+  }
+public static class Balancer {
+    private final Logger logger;
+    private final Map<String,ModelNode> nodes;
+    private final RoutingAllocation allocation;
+    private final RoutingNodes routingNodes;
+    private final WeightFunction weight;
+    private final float threshold;
+    private final MetaData metaData;
+    private final float avgShardsPerNode;
+    private final NodeSorter sorter;
+    public Balancer(    Logger logger,    RoutingAllocation allocation,    WeightFunction weight,    float threshold){
+      this.logger=logger;
+      this.allocation=allocation;
+      this.weight=weight;
+      this.threshold=threshold;
+      this.routingNodes=allocation.routingNodes();
+      this.metaData=allocation.metaData();
+      avgShardsPerNode=((float)metaData.getTotalNumberOfShards()) / routingNodes.size();
+      nodes=Collections.unmodifiableMap(buildModelFromAssigned());
+      sorter=newNodeSorter();
+    }
+    private ModelNode[] nodesArray(){
+      return nodes.values().toArray(new ModelNode[nodes.size()]);
+    }
+    public float avgShardsPerNode(    String index){
+      return ((float)metaData.index(index).getTotalNumberOfShards()) / nodes.size();
+    }
+    public float avgShardsPerNode(){
+      return avgShardsPerNode;
+    }
+    private NodeSorter newNodeSorter(){
+      return new NodeSorter(nodesArray(),weight,this);
+    }
+    private static float absDelta(    float lower,    float higher){
+    }
+    private static boolean lessThan(    float delta,    float threshold){
+      return delta <= (threshold + 0.001f);
+    }
+    private void balance(){
+      if (logger.isTraceEnabled()) {
+        logger.trace("Start balancing cluster");
+      }
+      if (allocation.hasPendingAsyncFetch()) {
+        logger.debug("skipping rebalance due to in-flight shard/store fetches");
+        return;
+      }
+      if (allocation.deciders().canRebalance(allocation).type() != Type.YES) {
+        logger.trace("skipping rebalance as it is disabled");
+        return;
+      }
+      if (nodes.size() < 2) {
+        logger.trace("skipping rebalance as single node only");
+        return;
+      }
+      balanceByWeights();
+    }
+    private MoveDecision decideRebalance(    final ShardRouting shard){
+    }
+    public Map<DiscoveryNode,Float> weighShard(    ShardRouting shard){
+      final ModelNode[] modelNodes=sorter.modelNodes;
+      final float[] weights=sorter.weights;
+      buildWeightOrderedIndices();
+      Map<DiscoveryNode,Float> nodes=new HashMap<>(modelNodes.length);
+      float currentNodeWeight=0.0f;
+      for (int i=0; i < modelNodes.length; i++) {
+        if (modelNodes[i].getNodeId().equals(shard.currentNodeId())) {
+          currentNodeWeight=weights[i];
+          break;
+        }
+      }
+      for (int i=0; i < modelNodes.length; i++) {
+        final float delta=currentNodeWeight - weights[i];
+        nodes.put(modelNodes[i].getRoutingNode().node(),delta);
+      }
+      return nodes;
+    }
+    private void balanceByWeights(){
+      final AllocationDeciders deciders=allocation.deciders();
+      final ModelNode[] modelNodes=sorter.modelNodes;
+      final float[] weights=sorter.weights;
+      for (      String index : buildWeightOrderedIndices()) {
+        IndexMetaData indexMetaData=metaData.index(index);
+        int relevantNodes=0;
+        for (int i=0; i < modelNodes.length; i++) {
+          ModelNode modelNode=modelNodes[i];
+          if (modelNode.getIndex(index) != null || deciders.canAllocate(indexMetaData,modelNode.getRoutingNode(),allocation).type() != Type.NO) {
+            modelNodes[i]=modelNodes[relevantNodes];
+            modelNodes[relevantNodes]=modelNode;
+            relevantNodes++;
+          }
+        }
+        if (relevantNodes < 2) {
+          continue;
+        }
+        sorter.reset(index,0,relevantNodes);
+        int lowIdx=0;
+        int highIdx=relevantNodes - 1;
+        while (true) {
+          final ModelNode minNode=modelNodes[lowIdx];
+          final ModelNode maxNode=modelNodes[highIdx];
+          advance_range:           if (maxNode.numShards(index) > 0) {
+            final float delta=absDelta(weights[lowIdx],weights[highIdx]);
+            if (lessThan(delta,threshold)) {
+              if (lowIdx > 0 && highIdx - 1 > 0 && (absDelta(weights[0],weights[highIdx - 1]) > threshold)) {
+                break advance_range;
+              }
+              if (logger.isTraceEnabled()) {
+                logger.trace("Stop balancing index [{}]  min_node [{}] weight: [{}]  max_node [{}] weight: [{}]  delta: [{}]",index,maxNode.getNodeId(),weights[highIdx],minNode.getNodeId(),weights[lowIdx],delta);
+              }
+              break;
+            }
+            if (logger.isTraceEnabled()) {
+              logger.trace("Balancing from node [{}] weight: [{}] to node [{}] weight: [{}]  delta: [{}]",maxNode.getNodeId(),weights[highIdx],minNode.getNodeId(),weights[lowIdx],delta);
+            }
+            if (tryRelocateShard(minNode,maxNode,index,delta)) {
+              weights[lowIdx]=sorter.weight(modelNodes[lowIdx]);
+              weights[highIdx]=sorter.weight(modelNodes[highIdx]);
+              sorter.sort(0,relevantNodes);
+              lowIdx=0;
+              highIdx=relevantNodes - 1;
+              continue;
+            }
+          }
+          if (lowIdx < highIdx - 1) {
+            lowIdx++;
+          }
+ else           if (lowIdx > 0) {
+            lowIdx=0;
+            highIdx--;
+          }
+ else {
+            break;
+          }
+        }
+      }
+    }
+    private String[] buildWeightOrderedIndices(){
+      final String[] indices=allocation.routingTable().indicesRouting().keys().toArray(String.class);
+      final float[] deltas=new float[indices.length];
+      for (int i=0; i < deltas.length; i++) {
+        sorter.reset(indices[i]);
+        deltas[i]=sorter.delta();
+      }
+      new IntroSorter(){
+        float pivotWeight;
+        @Override protected void swap(        int i,        int j){
+          final String tmpIdx=indices[i];
+          indices[i]=indices[j];
+          indices[j]=tmpIdx;
+          final float tmpDelta=deltas[i];
+          deltas[i]=deltas[j];
+          deltas[j]=tmpDelta;
+        }
+        @Override protected int compare(        int i,        int j){
+          return Float.compare(deltas[j],deltas[i]);
+        }
+        @Override protected void setPivot(        int i){
+          pivotWeight=deltas[i];
+        }
+        @Override protected int comparePivot(        int j){
+          return Float.compare(deltas[j],pivotWeight);
+        }
+      }
+.sort(0,deltas.length);
+      return indices;
+    }
+    public void moveShards(){
+      for (Iterator<ShardRouting> it=allocation.routingNodes().nodeInterleavedShardIterator(); it.hasNext(); ) {
+        ShardRouting shardRouting=it.next();
+        final MoveDecision moveDecision=decideMove(shardRouting);
+        if (moveDecision.isDecisionTaken() && moveDecision.forceMove()) {
+          final ModelNode sourceNode=nodes.get(shardRouting.currentNodeId());
+          final ModelNode targetNode=nodes.get(moveDecision.getTargetNode().getId());
+          sourceNode.removeShard(shardRouting);
+          Tuple<ShardRouting,ShardRouting> relocatingShards=routingNodes.relocateShard(shardRouting,targetNode.getNodeId(),allocation.clusterInfo().getShardSize(shardRouting,ShardRouting.UNAVAILABLE_EXPECTED_SHARD_SIZE),allocation.changes());
+          targetNode.addShard(relocatingShards.v2());
+          if (logger.isTraceEnabled()) {
+            logger.trace("Moved shard [{}] to node [{}]",shardRouting,targetNode.getRoutingNode());
+          }
+        }
+ else         if (moveDecision.isDecisionTaken() && moveDecision.canRemain() == false) {
+          logger.trace("[{}][{}] can't move",shardRouting.index(),shardRouting.id());
+        }
+      }
+    }
+    public MoveDecision decideMove(    final ShardRouting shardRouting){
+    }
+    private Map<String,ModelNode> buildModelFromAssigned(){
+    }
+    private void allocateUnassigned(){
+    }
+    private AllocateUnassignedDecision decideAllocateUnassigned(    final ShardRouting shard,    final Set<ModelNode> throttledNodes){
+      if (shard.assignedToNode()) {
+        return AllocateUnassignedDecision.NOT_TAKEN;
+      }
+      final boolean explain=allocation.debugDecision();
+      Decision shardLevelDecision=allocation.deciders().canAllocate(shard,allocation);
+      if (shardLevelDecision.type() == Type.NO && explain == false) {
+        return AllocateUnassignedDecision.no(AllocationStatus.DECIDERS_NO,null);
+      }
+      float minWeight=Float.POSITIVE_INFINITY;
+      ModelNode minNode=null;
+      Decision decision=null;
+      if (throttledNodes.size() >= nodes.size() && explain == false) {
+        return AllocateUnassignedDecision.no(AllocationStatus.DECIDERS_NO,null);
+      }
+      Map<String,NodeAllocationResult> nodeExplanationMap=explain ? new HashMap<>() : null;
+      List<Tuple<String,Float>> nodeWeights=explain ? new ArrayList<>() : null;
+      for (      ModelNode node : nodes.values()) {
+        if ((throttledNodes.contains(node) || node.containsShard(shard)) && explain == false) {
+          continue;
+        }
+        float currentWeight=weight.weightShardAdded(this,node,shard.getIndexName());
+        if (currentWeight > minWeight && explain == false) {
+          continue;
+        }
+        Decision currentDecision=allocation.deciders().canAllocate(shard,node.getRoutingNode(),allocation);
+        if (explain) {
+          nodeExplanationMap.put(node.getNodeId(),new NodeAllocationResult(node.getRoutingNode().node(),currentDecision,0));
+          nodeWeights.add(Tuple.tuple(node.getNodeId(),currentWeight));
+        }
+        if (currentDecision.type() == Type.YES || currentDecision.type() == Type.THROTTLE) {
+          final boolean updateMinNode;
+          if (currentWeight == minWeight) {
+            if (currentDecision.type() == decision.type()) {
+              final int repId=shard.id();
+              final int nodeHigh=node.highestPrimary(shard.index().getName());
+              final int minNodeHigh=minNode.highestPrimary(shard.getIndexName());
+              updateMinNode=((((nodeHigh > repId && minNodeHigh > repId) || (nodeHigh < repId && minNodeHigh < repId)) && (nodeHigh < minNodeHigh)) || (nodeHigh > minNodeHigh && nodeHigh > repId && minNodeHigh < repId));
+            }
+ else {
+              updateMinNode=currentDecision.type() == Type.YES;
+            }
+          }
+ else {
+            updateMinNode=true;
+          }
+          if (updateMinNode) {
+            minNode=node;
+            minWeight=currentWeight;
+            decision=currentDecision;
+          }
+        }
+      }
+      if (decision == null) {
+        decision=Decision.NO;
+      }
+      List<NodeAllocationResult> nodeDecisions=null;
+      if (explain) {
+        nodeDecisions=new ArrayList<>();
+        nodeWeights.sort(null);
+        int weightRanking=0;
+        for (        Tuple<String,Float> nodeWeight : nodeWeights) {
+          NodeAllocationResult current=nodeExplanationMap.get(nodeWeight.v1());
+          nodeDecisions.add(new NodeAllocationResult(current.getNode(),current.getCanAllocateDecision(),++weightRanking));
+        }
+      }
+      return AllocateUnassignedDecision.fromDecision(decision,minNode != null ? minNode.routingNode.node() : null,nodeDecisions);
+    }
+    private boolean tryRelocateShard(    ModelNode minNode,    ModelNode maxNode,    String idx,    float minCost){
+    }
+  }
+static class ModelNode implements Iterable<ModelIndex> {
+    private final Map<String,ModelIndex> indices=new HashMap<>();
+    private int numShards=0;
+    private final RoutingNode routingNode;
+    ModelNode(    RoutingNode routingNode){
+      this.routingNode=routingNode;
+    }
+    public ModelIndex getIndex(    String indexId){
+      return indices.get(indexId);
+    }
+    public String getNodeId(){
+      return routingNode.nodeId();
+    }
+    public RoutingNode getRoutingNode(){
+      return routingNode;
+    }
+    public int numShards(){
+      return numShards;
+    }
+    public int numShards(    String idx){
+      ModelIndex index=indices.get(idx);
+      return index == null ? 0 : index.numShards();
+    }
+    public int highestPrimary(    String index){
+      ModelIndex idx=indices.get(index);
+      if (idx != null) {
+        return idx.highestPrimary();
+      }
+      return -1;
+    }
+    public void addShard(    ShardRouting shard){
+      ModelIndex index=indices.get(shard.getIndexName());
+      if (index == null) {
+        index=new ModelIndex(shard.getIndexName());
+        indices.put(index.getIndexId(),index);
+      }
+      index.addShard(shard);
+      numShards++;
+    }
+    public void removeShard(    ShardRouting shard){
+      ModelIndex index=indices.get(shard.getIndexName());
+      if (index != null) {
+        index.removeShard(shard);
+        if (index.numShards() == 0) {
+          indices.remove(shard.getIndexName());
+        }
+      }
+      numShards--;
+    }
+    @Override public String toString(){
+      StringBuilder sb=new StringBuilder();
+      sb.append("Node(").append(routingNode.nodeId()).append(")");
+      return sb.toString();
+    }
+    @Override public Iterator<ModelIndex> iterator(){
+      return indices.values().iterator();
+    }
+    public boolean containsShard(    ShardRouting shard){
+      ModelIndex index=getIndex(shard.getIndexName());
+      return index == null ? false : index.containsShard(shard);
+    }
+  }
+static final class ModelIndex implements Iterable<ShardRouting> {
+    private final String id;
+    private final Set<ShardRouting> shards=new HashSet<>(4);
+    private int highestPrimary=-1;
+    ModelIndex(    String id){
+      this.id=id;
+    }
+    public int highestPrimary(){
+      if (highestPrimary == -1) {
+        int maxId=-1;
+        for (        ShardRouting shard : shards) {
+          if (shard.primary()) {
+            maxId=Math.max(maxId,shard.id());
+          }
+        }
+        return highestPrimary=maxId;
+      }
+      return highestPrimary;
+    }
+    public String getIndexId(){
+      return id;
+    }
+    public int numShards(){
+      return shards.size();
+    }
+    @Override public Iterator<ShardRouting> iterator(){
+      return shards.iterator();
+    }
+    public void removeShard(    ShardRouting shard){
+    }
+    public void addShard(    ShardRouting shard){
+    }
+    public boolean containsShard(    ShardRouting shard){
+      return shards.contains(shard);
+    }
+  }
+static final class NodeSorter extends IntroSorter {
+    final ModelNode[] modelNodes;
+    final float[] weights;
+    private final WeightFunction function;
+    private String index;
+    private final Balancer balancer;
+    private float pivotWeight;
+    NodeSorter(    ModelNode[] modelNodes,    WeightFunction function,    Balancer balancer){
+      this.function=function;
+      this.balancer=balancer;
+      this.modelNodes=modelNodes;
+      weights=new float[modelNodes.length];
+    }
+    public void reset(    String index,    int from,    int to){
+      this.index=index;
+      for (int i=from; i < to; i++) {
+        weights[i]=weight(modelNodes[i]);
+      }
+      sort(from,to);
+    }
+    public void reset(    String index){
+      reset(index,0,modelNodes.length);
+    }
+    public float weight(    ModelNode node){
+      return function.weight(balancer,node,index);
+    }
+    @Override protected void swap(    int i,    int j){
+      final ModelNode tmpNode=modelNodes[i];
+      modelNodes[i]=modelNodes[j];
+      modelNodes[j]=tmpNode;
+      final float tmpWeight=weights[i];
+      weights[i]=weights[j];
+      weights[j]=tmpWeight;
+    }
+    @Override protected int compare(    int i,    int j){
+      return Float.compare(weights[i],weights[j]);
+    }
+    @Override protected void setPivot(    int i){
+      pivotWeight=weights[i];
+    }
+    @Override protected int comparePivot(    int j){
+      return Float.compare(pivotWeight,weights[j]);
+    }
+    public float delta(){
+      return weights[weights.length - 1] - weights[0];
+    }
+  }
+}

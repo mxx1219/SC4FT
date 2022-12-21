@@ -1,0 +1,12 @@
+public boolean isCurrentlyDriving(){
+  try {
+    CarDrivingStateEvent currentState=mDrivingStateManager.getCurrentCarDrivingState();
+    if (currentState != null) {
+      return currentState.eventValue == CarDrivingStateEvent.DRIVING_STATE_IDLING || currentState.eventValue == CarDrivingStateEvent.DRIVING_STATE_MOVING;
+    }
+  }
+ catch (  CarNotConnectedException e) {
+    Log.e(TAG,"Cannot determine current driving state. Car not connected",e);
+  }
+  return false;
+}

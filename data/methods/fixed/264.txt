@@ -1,0 +1,7 @@
+public BitmapShader(Bitmap bitmap,TileMode tileX,TileMode tileY){
+  mBitmap=bitmap;
+  mTileX=tileX;
+  mTileY=tileY;
+  final long b=bitmap.getSkBitmap();
+  init(nativeCreate(b,tileX.nativeInt,tileY.nativeInt));
+}

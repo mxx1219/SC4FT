@@ -1,0 +1,36 @@
+public JavacParser newParser(CharSequence input,int startPos,final EndPosTable endPos){
+  Scanner lexer=scannerFactory.newScanner(input,true);
+  lexer.seek(startPos);
+  if (endPos instanceof NBJavacParser.EndPosTableImpl) {
+    ((NBJavacParser.EndPosTableImpl)endPos).resetErrorEndPos();
+  }
+  return new NBJavacParser(this,lexer,true,false,true,false,cancelService){
+    @Override protected AbstractEndPosTable newEndPosTable(    boolean keepEndPositions){
+      return new AbstractEndPosTable(this){
+        @Override public void storeEnd(        JCTree tree,        int endpos){
+          ((EndPosTableImpl)endPos).storeEnd(tree,endpos);
+        }
+        @Override protected <T extends JCTree>T to(        T t){
+          storeEnd(t,token.endPos);
+          return t;
+        }
+        @Override protected <T extends JCTree>T toP(        T t){
+          storeEnd(t,S.prevToken().endPos);
+          return t;
+        }
+        @Override public int getEndPos(        JCTree tree){
+          return endPos.getEndPos(tree);
+        }
+        @Override public int replaceTree(        JCTree oldtree,        JCTree newtree){
+          return endPos.replaceTree(oldtree,newtree);
+        }
+        @Override public void setErrorEndPos(        int errPos){
+          super.setErrorEndPos(errPos);
+          ((EndPosTableImpl)endPos).setErrorEndPos(errPos);
+        }
+      }
+;
+    }
+  }
+;
+}

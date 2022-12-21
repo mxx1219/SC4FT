@@ -1,0 +1,55 @@
+package org.axonframework.integrationtests.eventstore.benchmark;
+import org.axonframework.domain.AggregateIdentifier;
+import org.axonframework.domain.DomainEvent;
+import org.axonframework.domain.SimpleDomainEventStream;
+import org.axonframework.eventstore.EventStore;
+import org.axonframework.integrationtests.commandhandling.StubDomainEvent;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.support.ClassPathXmlApplicationContext;
+import org.springframework.util.Assert;
+import java.util.ArrayList;
+import java.util.List;
+public abstract class AbstractEventStoreBenchmark {
+  private static final int THREAD_COUNT=100;
+  private static final int TRANSACTION_COUNT=500;
+  private static final int TRANSACTION_SIZE=2;
+  protected abstract void prepareEventStore();
+  protected static AbstractEventStoreBenchmark prepareBenchMark(  String... appContexts){
+    Assert.notEmpty(appContexts);
+    ApplicationContext context=new ClassPathXmlApplicationContext(appContexts);
+    return context.getBean(AbstractEventStoreBenchmark.class);
+  }
+  public void startBenchMark() throws InterruptedException {
+    prepareEventStore();
+    long start=System.currentTimeMillis();
+    List<Thread> threads=new ArrayList<Thread>();
+    for (int t=0; t < getThreadCount(); t++) {
+      Thread thread=new Thread(getRunnableInstance());
+      thread.start();
+      threads.add(thread);
+    }
+    for (    Thread thread : threads) {
+      thread.join();
+    }
+    long end=System.currentTimeMillis();
+    System.out.println(String.format("Result: %s threads concurrently wrote %s * %s events each in %s milliseconds. That is an average of %.0f events per second",getThreadCount(),getTransactionCount(),getTransactionSize(),(end - start),(((float)getThreadCount() * getTransactionCount() * getTransactionSize()) / ((float)(end - start) / 1000))));
+  }
+  protected abstract Runnable getRunnableInstance();
+  protected int saveAndLoadLargeNumberOfEvents(  AggregateIdentifier aggregateId,  EventStore eventStore,  int eventSequence){
+    List<DomainEvent> events=new ArrayList<DomainEvent>();
+    for (int t=0; t < getTransactionSize(); t++) {
+      events.add(new StubDomainEvent(aggregateId,eventSequence++));
+    }
+    eventStore.appendEvents("benchmark",new SimpleDomainEventStream(events));
+    return eventSequence;
+  }
+  protected int getThreadCount(){
+    return THREAD_COUNT;
+  }
+  protected int getTransactionCount(){
+    return TRANSACTION_COUNT;
+  }
+  protected int getTransactionSize(){
+    return TRANSACTION_SIZE;
+  }
+}

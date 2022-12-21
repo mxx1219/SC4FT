@@ -1,0 +1,107 @@
+package net.runelite.client.plugins.npchighlight;
+import com.google.common.eventbus.Subscribe;
+import com.google.inject.Provides;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import javax.inject.Inject;
+import lombok.AccessLevel;
+import lombok.Getter;
+import net.runelite.api.Client;
+import net.runelite.api.NPC;
+import net.runelite.api.events.FocusChanged;
+import net.runelite.api.events.GameTick;
+import net.runelite.api.events.MenuOptionClicked;
+import net.runelite.client.config.ConfigManager;
+import net.runelite.client.input.KeyManager;
+import net.runelite.client.menus.MenuManager;
+import net.runelite.client.plugins.Plugin;
+import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.ui.overlay.Overlay;
+import net.runelite.client.util.WildcardMatcher;
+@PluginDescriptor(name="NPC Indicators") public class NpcIndicatorsPlugin extends Plugin {
+  private static final String TAG="Tag";
+  private static final String DELIMITER_REGEX="\\s*,\\s*";
+  @Inject private Client client;
+  @Inject private MenuManager menuManager;
+  @Inject private NpcIndicatorsConfig config;
+  @Inject private NpcClickboxOverlay npcClickboxOverlay;
+  @Inject private NpcMinimapOverlay npcMinimapOverlay;
+  @Inject private NpcIndicatorsInput inputListener;
+  @Inject private KeyManager keyManager;
+  @Getter(AccessLevel.PACKAGE) private final Set<Integer> npcTags=new HashSet<>();
+  @Getter(AccessLevel.PACKAGE) private final List<NPC> taggedNpcs=new ArrayList<>();
+  @Getter(AccessLevel.PACKAGE) private Map<NPC,String> highlightedNpcs=new HashMap<>();
+  private boolean hotKeyPressed=false;
+  private void toggleTag(  int npcId){
+    boolean removed=npcTags.remove(npcId);
+    if (!removed)     npcTags.add(npcId);
+  }
+  @Provides NpcIndicatorsConfig provideConfig(  ConfigManager configManager){
+    return configManager.getConfig(NpcIndicatorsConfig.class);
+  }
+  @Override protected void startUp() throws Exception {
+    keyManager.registerKeyListener(inputListener);
+  }
+  @Override protected void shutDown() throws Exception {
+    npcTags.clear();
+    taggedNpcs.clear();
+    keyManager.unregisterKeyListener(inputListener);
+  }
+  @Subscribe public void onFocusChanged(  FocusChanged focusChanged){
+    if (!focusChanged.isFocused() && hotKeyPressed) {
+      updateNpcMenuOptions(false);
+    }
+  }
+  @Subscribe public void onMenuObjectClicked(  MenuOptionClicked click){
+    if (click.getMenuOption().equals(TAG))     toggleTag(click.getId());
+  }
+  @Subscribe public void onGameTick(  GameTick tick){
+    highlightedNpcs=buildNpcsToHighlight();
+    taggedNpcs.clear();
+    if (npcTags.isEmpty() || !config.isTagEnabled()) {
+      return;
+    }
+    for (    NPC npc : client.getNpcs()) {
+      if (npcTags.contains(npc.getIndex()) && npc.getName() != null) {
+        taggedNpcs.add(npc);
+      }
+    }
+  }
+  @Override public Collection<Overlay> getOverlays(){
+    return Arrays.asList(npcClickboxOverlay,npcMinimapOverlay);
+  }
+  private Map<NPC,String> buildNpcsToHighlight(){
+    String configNpcs=config.getNpcToHighlight().toLowerCase();
+    if (configNpcs.isEmpty())     return Collections.EMPTY_MAP;
+    Map<NPC,String> npcMap=new HashMap<>();
+    List<String> highlightedNpcs=Arrays.asList(configNpcs.split(DELIMITER_REGEX));
+    for (    NPC npc : client.getNpcs()) {
+      String npcName=npc.getName();
+      for (      String highlight : highlightedNpcs) {
+        if (WildcardMatcher.matches(highlight,npcName)) {
+          npcMap.put(npc,npcName);
+        }
+      }
+    }
+    return npcMap;
+  }
+  void updateNpcMenuOptions(  boolean pressed){
+    if (!config.isTagEnabled()) {
+      return;
+    }
+    if (pressed) {
+      menuManager.addNpcMenuOption(TAG);
+    }
+ else {
+      menuManager.removeNpcMenuOption(TAG);
+    }
+    hotKeyPressed=pressed;
+  }
+}

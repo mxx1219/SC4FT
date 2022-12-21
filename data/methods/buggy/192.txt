@@ -1,0 +1,3 @@
+public int compare(Message m1,Message m2){
+  return (m2.getSentDate() != null) ? m2.getSentDate().compareTo(m1.getSentDate()) : -1;
+}

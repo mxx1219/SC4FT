@@ -1,0 +1,3 @@
+public AppOpsManagerPatch(){
+  super(IAppOpsService.Stub.TYPE,Context.APP_OPS_SERVICE);
+}

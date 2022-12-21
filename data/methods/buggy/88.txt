@@ -1,0 +1,11 @@
+private void addInnerClasses(CodeWriter code,ClassNode cls) throws CodegenException {
+  for (  ClassNode innerCls : cls.getInnerClasses()) {
+    if (innerCls.contains(AFlag.DONT_GENERATE) || innerCls.contains(AFlag.ANONYMOUS_CLASS)) {
+      continue;
+    }
+    ClassGen inClGen=new ClassGen(innerCls,getParentGen());
+    code.newLine();
+    inClGen.addClassCode(code);
+    imports.addAll(inClGen.getImports());
+  }
+}

@@ -1,0 +1,21 @@
+public void animateList(){
+  expanded=!expanded;
+  if (animateTimeline.getStatus().equals(Status.RUNNING))   animateTimeline.stop();
+  animateTimeline.getKeyFrames().clear();
+  double duration=120 / (double)this.getChildren().size();
+  if (expanded)   this.getChildren().forEach(null);
+  for (int i=1; i < this.getChildren().size(); i++) {
+    Node child=this.getChildren().get(i);
+    ArrayList<KeyValue> keyValues=animationsMap.get(child).call(expanded);
+    animateTimeline.getKeyFrames().add(new KeyFrame(Duration.millis(i * duration),keyValues.toArray(new KeyValue[keyValues.size()])));
+  }
+  ArrayList<KeyValue> keyValues=animationsMap.get(this.getChildren().get(0)).call(expanded);
+  animateTimeline.getKeyFrames().add(new KeyFrame(Duration.millis(160),keyValues.toArray(new KeyValue[keyValues.size()])));
+  if (!expanded) {
+    animateTimeline.setOnFinished(null);
+  }
+ else {
+    animateTimeline.setOnFinished(null);
+  }
+  animateTimeline.play();
+}

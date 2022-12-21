@@ -1,0 +1,22 @@
+private static UpdateRequest createUpdateRequest(Object document,Exchange exchange){
+  if (document instanceof UpdateRequest) {
+    return (UpdateRequest)document;
+  }
+  UpdateRequest updateRequest=new UpdateRequest();
+  if (document instanceof byte[]) {
+    updateRequest.doc((byte[])document);
+  }
+ else   if (document instanceof Map) {
+    updateRequest.doc((Map<String,Object>)document);
+  }
+ else   if (document instanceof String) {
+    updateRequest.doc((String)document,XContentFactory.xContentType((String)document));
+  }
+ else   if (document instanceof XContentBuilder) {
+    updateRequest.doc((XContentBuilder)document);
+  }
+ else {
+    return null;
+  }
+  return updateRequest.waitForActiveShards(exchange.getIn().getHeader(ElasticsearchConstants.PARAM_WAIT_FOR_ACTIVE_SHARDS,Integer.class)).parent(exchange.getIn().getHeader(PARENT,String.class)).index(exchange.getIn().getHeader(ElasticsearchConstants.PARAM_INDEX_NAME,String.class)).type(exchange.getIn().getHeader(ElasticsearchConstants.PARAM_INDEX_TYPE,String.class)).id(exchange.getIn().getHeader(ElasticsearchConstants.PARAM_INDEX_ID,String.class));
+}

@@ -1,0 +1,40 @@
+private void populateEntryTypesTable(Object out) throws SQLException {
+  ArrayList<String> fieldRequirement=new ArrayList<>();
+  ArrayList<String> existentTypes=new ArrayList<>();
+  if (out instanceof Connection) {
+    try (Statement sm=(Statement)SQLUtil.processQueryWithResults(out,"SELECT label FROM entry_types");ResultSet rs=sm.getResultSet()){
+      while (rs.next()) {
+        existentTypes.add(rs.getString(1));
+      }
+    }
+   }
+  for (  EntryType val : EntryTypes.getAllValues()) {
+    StringBuilder querySB=new StringBuilder();
+    fieldRequirement.clear();
+    for (int i=0; i < SQLUtil.getAllFields().size(); i++) {
+      fieldRequirement.add(i,"gen");
+    }
+    List<String> reqFields=val.getRequiredFieldsFlat();
+    List<String> optFields=val.getOptionalFields();
+    List<String> utiFields=Arrays.asList("search");
+    fieldRequirement=SQLUtil.setFieldRequirement(SQLUtil.getAllFields(),reqFields,optFields,utiFields,fieldRequirement);
+    if (!existentTypes.contains(val.getName().toLowerCase())) {
+      querySB.append("INSERT INTO entry_types (label, " + fieldStr + ") VALUES (");
+      querySB.append('\'' + val.getName().toLowerCase() + '\'');
+      for (      String aFieldRequirement : fieldRequirement) {
+        querySB.append(", '" + aFieldRequirement + '\'');
+      }
+      querySB.append(");");
+    }
+ else {
+      String[] update=fieldStr.split(",");
+      querySB.append("UPDATE entry_types SET \n");
+      for (int i=0; i < fieldRequirement.size(); i++) {
+        querySB.append(update[i] + "='" + fieldRequirement.get(i)+ "',");
+      }
+      querySB.delete(querySB.lastIndexOf(","),querySB.length());
+      querySB.append(" WHERE label='" + val.getName().toLowerCase() + "';");
+    }
+    SQLUtil.processQuery(out,querySB.toString());
+  }
+}

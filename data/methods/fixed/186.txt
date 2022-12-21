@@ -1,0 +1,9 @@
+public static Set<Modifier> getModifiers(int flag){
+  EnumSet<Modifier> result=EnumSet.noneOf(Modifier.class);
+  if ((flag & PRIVATE) != 0)   result.add(Modifier.PRIVATE);
+  if ((flag & PUBLIC) != 0)   result.add(Modifier.PUBLIC);
+  if ((flag & STATIC) != 0)   result.add(Modifier.STATIC);
+  if ((flag & PRIVILAGE) != 0)   result.add(Modifier.PROTECTED);
+  if ((flag & DEPRICATED) != 0)   result.add(Modifier.DEPRECATED);
+  return result;
+}

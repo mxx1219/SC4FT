@@ -1,0 +1,8 @@
+public double computeLatency(){
+  if (totalSuccessfullyProcessed <= 0) {
+    return 0;
+  }
+ else {
+    return totalLatencyMs / totalSuccessfullyProcessed;
+  }
+}

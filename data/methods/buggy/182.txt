@@ -1,0 +1,17 @@
+@Override public void initialize(){
+  for (  final StandardClassDAGNode classNode : standardClassNodes) {
+    final ArrayList<InterfaceDAGNode> interfaceNodes=classNode.implementedInterfaceClassNodes;
+    for (    final DAGNode interfaceNode : interfaceNodes) {
+      MultiSet.put(map,interfaceNode.name,classNode.name);
+      for (      final DAGNode subclassNode : classNode.allSubNodes) {
+        MultiSet.put(map,interfaceNode.name,subclassNode.name);
+      }
+      for (      final DAGNode superinterfaceNode : interfaceNode.allSuperNodes) {
+        MultiSet.put(map,superinterfaceNode.name,classNode.name);
+        for (        final DAGNode subclassNode : classNode.allSubNodes) {
+          MultiSet.put(map,superinterfaceNode.name,subclassNode.name);
+        }
+      }
+    }
+  }
+}

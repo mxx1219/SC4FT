@@ -1,0 +1,14 @@
+@Override public String getSwaggerType(Property p){
+  String swaggerType=super.getSwaggerType(p);
+  String type=null;
+  if (typeMapping.containsKey(swaggerType.toLowerCase())) {
+    type=typeMapping.get(swaggerType.toLowerCase());
+    if (languageSpecificPrimitives.contains(type) && !foundationClasses.contains(type)) {
+      return toModelNameWithoutReservedWordCheck(type);
+    }
+  }
+ else {
+    type=swaggerType;
+  }
+  return toModelNameWithoutReservedWordCheck(type);
+}

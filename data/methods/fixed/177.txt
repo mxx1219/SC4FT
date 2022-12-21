@@ -1,0 +1,16 @@
+private void defineConstructs(BLangPackage pkgNode,SymbolEnv pkgEnv){
+  pkgNode.imports.forEach(null);
+  this.typePrecedence=0;
+  pkgNode.constants.forEach(null);
+  defineTypeNodes(pkgNode.typeDefinitions,pkgEnv);
+  pkgNode.globalVars.forEach(null);
+  pkgEnv.logErrors=true;
+  pkgNode.typeDefinitions.sort(Comparator.comparing(null));
+  defineErrorDetails(pkgNode.typeDefinitions,pkgEnv);
+  defineFields(pkgNode.typeDefinitions,pkgEnv);
+  defineMembers(pkgNode.typeDefinitions,pkgEnv);
+  pkgNode.services.forEach(null);
+  pkgNode.functions.forEach(null);
+  pkgNode.annotations.forEach(null);
+  pkgNode.globalVars.stream().filter(null).map(null).forEach(null);
+}

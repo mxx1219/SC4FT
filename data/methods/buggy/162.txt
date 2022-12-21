@@ -1,0 +1,44 @@
+public void testMapHashes() throws Exception {
+  DocRouter hp=DocRouter.DEFAULT;
+  List<Range> ranges;
+  ranges=hp.partitionRange(2,hp.fullRange());
+  assertEquals(Integer.MIN_VALUE,ranges.get(0).min);
+  assertEquals(0x80000000,ranges.get(0).min);
+  assertEquals(0xffffffff,ranges.get(0).max);
+  assertEquals(0x00000000,ranges.get(1).min);
+  assertEquals(0x7fffffff,ranges.get(1).max);
+  ranges=hp.partitionRange(2,new DocRouter.Range(0,0x7fffffff));
+  assertEquals(0x00000000,ranges.get(0).min);
+  assertEquals(0x3fffffff,ranges.get(0).max);
+  assertEquals(0x40000000,ranges.get(1).min);
+  assertEquals(0x7fffffff,ranges.get(1).max);
+  int defaultLowerBits=0x0000ffff;
+  for (int i=1; i <= 30000; i++) {
+    if (i > 100)     i+=13;
+ else     if (i > 1000)     i+=31;
+ else     if (i > 5000)     i+=101;
+    long rangeSize=0x0000000100000000L / i;
+    ranges=hp.partitionRange(i,hp.fullRange());
+    assertEquals(i,ranges.size());
+    assertTrue("First range does not start before " + Integer.MIN_VALUE + " it is:"+ ranges.get(0).min,ranges.get(0).min <= Integer.MIN_VALUE);
+    assertTrue("Last range does not end after " + Integer.MAX_VALUE + " it is:"+ ranges.get(ranges.size() - 1).max,ranges.get(ranges.size() - 1).max >= Integer.MAX_VALUE);
+    for (    Range range : ranges) {
+      String s=range.toString();
+      Range newRange=hp.fromString(s);
+      assertEquals(range,newRange);
+    }
+    int lastEnd=Integer.MIN_VALUE - 1;
+    for (    Range range : ranges) {
+      int currStart=range.min;
+      int currEnd=range.max;
+      assertEquals(lastEnd + 1,currStart);
+      if (ranges.size() < 4000) {
+        assertEquals(defaultLowerBits,currEnd & defaultLowerBits);
+        long currRangeSize=(long)currEnd - (long)currStart;
+        long error=Math.abs(rangeSize - currRangeSize);
+        assertTrue(error < rangeSize / 16);
+      }
+      lastEnd=currEnd;
+    }
+  }
+}

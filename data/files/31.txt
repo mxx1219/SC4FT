@@ -1,0 +1,38 @@
+package org.apache.jmeter.modifiers;
+import org.apache.jmeter.processor.PreProcessor;
+import org.apache.jmeter.samplers.Sampler;
+import org.apache.jmeter.testbeans.TestBean;
+import org.apache.jmeter.threads.JMeterContext;
+import org.apache.jmeter.threads.JMeterContextService;
+import org.apache.jmeter.util.BeanShellInterpreter;
+import org.apache.jmeter.util.BeanShellTestElement;
+import org.apache.jorphan.util.JMeterException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+public class BeanShellPreProcessor extends BeanShellTestElement implements Cloneable, PreProcessor, TestBean {
+  private static final Logger log=LoggerFactory.getLogger(BeanShellPreProcessor.class);
+  private static final long serialVersionUID=5;
+  private static final String INIT_FILE="beanshell.preprocessor.init";
+  @Override protected String getInitFileProperty(){
+    return INIT_FILE;
+  }
+  @Override public void process(){
+    final BeanShellInterpreter bshInterpreter=getBeanShellInterpreter();
+    if (bshInterpreter == null) {
+      log.error("BeanShell not found");
+      return;
+    }
+    JMeterContext jmctx=JMeterContextService.getContext();
+    Sampler sam=jmctx.getCurrentSampler();
+    try {
+      bshInterpreter.set("sampler",sam);
+      processFileOrScript(bshInterpreter);
+    }
+ catch (    JMeterException e) {
+      log.warn("Problem in BeanShell script. {}",e.toString());
+    }
+  }
+  @Override public Object clone(){
+    return super.clone();
+  }
+}

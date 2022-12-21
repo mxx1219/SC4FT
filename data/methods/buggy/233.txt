@@ -1,0 +1,14 @@
+private InputStream getInputStream(String resPath,Result r) throws IOException {
+  if (r == null) {
+    return null;
+  }
+  byte[] value=r.getValue(B_FAMILY,B_COLUMN);
+  if (value.length == 0) {
+    Path redirectPath=bigCellHDFSPath(resPath);
+    FileSystem fileSystem=HadoopUtil.getWorkingFileSystem();
+    return fileSystem.open(redirectPath);
+  }
+ else {
+    return new ByteArrayInputStream(value);
+  }
+}

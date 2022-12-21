@@ -1,0 +1,42 @@
+@Override public void createMenuItems(Bundle savedInstanceState){
+  final Context context=getContext();
+  if (context == null) {
+    return;
+  }
+  stylesMap=generateStylesMap(context);
+  if (savedInstanceState == null) {
+    RenderingRulesStorage current=getMyApplication().getRendererRegistry().getCurrentSelectedRenderer();
+    if (current != null) {
+      selectedStyle=current.getName();
+    }
+  }
+ else {
+    selectedStyle=savedInstanceState.getString(SELECTED_STYLE_KEY);
+  }
+  if (selectedStyle == null) {
+    selectedStyle=RendererRegistry.DEFAULT_RENDER;
+  }
+  rbColorList=AndroidUtils.createCheckedColorStateList(context,R.color.icon_color,getActiveColorId());
+  items.add(new TitleItem(getString(R.string.map_widget_renderer)));
+  descrItem=(BottomSheetItemTitleWithDescrAndButton)new BottomSheetItemTitleWithDescrAndButton.Builder().setButtonTitle(getString(R.string.show_full_description)).setOnButtonClickListener(new View.OnClickListener(){
+    @Override public void onClick(    View v){
+      descriptionExpanded=!descriptionExpanded;
+      descrItem.setButtonText(getString(descriptionExpanded ? R.string.hide_full_description : R.string.show_full_description));
+      descrItem.setDescriptionMaxLines(descriptionExpanded ? Integer.MAX_VALUE : COLLAPSED_DESCRIPTION_LINES);
+    }
+  }
+).setDescription(RendererRegistry.getRendererDescription(context,selectedStyle)).setDescriptionMaxLines(COLLAPSED_DESCRIPTION_LINES).setLayoutId(R.layout.bottom_sheet_item_with_expandable_descr).create();
+  items.add(descrItem);
+  items.add(new SubtitleDividerItem(context));
+  NestedScrollView nestedScrollView=new NestedScrollView(context);
+  stylesContainer=new LinearLayout(context);
+  stylesContainer.setLayoutParams((new LayoutParams(LayoutParams.MATCH_PARENT,LayoutParams.WRAP_CONTENT)));
+  stylesContainer.setOrientation(LinearLayout.VERTICAL);
+  stylesContainer.setPadding(0,getResources().getDimensionPixelSize(R.dimen.bottom_sheet_content_padding_small),0,0);
+  for (int i=0; i < stylesMap.size(); i++) {
+    LayoutInflater.from(new ContextThemeWrapper(context,themeRes)).inflate(R.layout.bottom_sheet_item_with_radio_btn_left,stylesContainer,true);
+  }
+  nestedScrollView.addView(stylesContainer);
+  items.add(new BaseBottomSheetItem.Builder().setCustomView(nestedScrollView).create());
+  populateStylesList();
+}

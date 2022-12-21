@@ -1,0 +1,292 @@
+package org.apache.hadoop.hbase.replication.regionserver;
+import java.io.EOFException;
+import java.io.IOException;
+import java.util.List;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.PriorityBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hbase.Cell;
+import org.apache.hadoop.hbase.CellUtil;
+import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.replication.WALEntryFilter;
+import org.apache.hadoop.hbase.util.Pair;
+import org.apache.hadoop.hbase.util.Threads;
+import org.apache.hadoop.hbase.wal.WAL.Entry;
+import org.apache.hadoop.hbase.wal.WALEdit;
+import org.apache.hadoop.hbase.wal.WALKey;
+import org.apache.yetus.audience.InterfaceAudience;
+import org.apache.yetus.audience.InterfaceStability;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.apache.hadoop.hbase.shaded.protobuf.generated.WALProtos.BulkLoadDescriptor;
+import org.apache.hadoop.hbase.shaded.protobuf.generated.WALProtos.StoreDescriptor;
+@InterfaceAudience.Private @InterfaceStability.Evolving class ReplicationSourceWALReader extends Thread {
+  private static final Logger LOG=LoggerFactory.getLogger(ReplicationSourceWALReader.class);
+  private final PriorityBlockingQueue<Path> logQueue;
+  private final FileSystem fs;
+  private final Configuration conf;
+  private final WALEntryFilter filter;
+  private final ReplicationSource source;
+  private final BlockingQueue<WALEntryBatch> entryBatchQueue;
+  private final long replicationBatchSizeCapacity;
+  private final int replicationBatchCountCapacity;
+  private long currentPosition;
+  private final long sleepForRetries;
+  private final int maxRetriesMultiplier;
+  private final boolean eofAutoRecovery;
+  private boolean isReaderRunning=true;
+  private AtomicLong totalBufferUsed;
+  private long totalBufferQuota;
+  public ReplicationSourceWALReader(  FileSystem fs,  Configuration conf,  PriorityBlockingQueue<Path> logQueue,  long startPosition,  WALEntryFilter filter,  ReplicationSource source){
+    this.logQueue=logQueue;
+    this.currentPosition=startPosition;
+    this.fs=fs;
+    this.conf=conf;
+    this.filter=filter;
+    this.source=source;
+    this.replicationBatchSizeCapacity=this.conf.getLong("replication.source.size.capacity",1024 * 1024 * 64);
+    this.replicationBatchCountCapacity=this.conf.getInt("replication.source.nb.capacity",25000);
+    int batchCount=conf.getInt("replication.source.nb.batches",1);
+    this.totalBufferUsed=source.getSourceManager().getTotalBufferUsed();
+    this.totalBufferQuota=conf.getLong(HConstants.REPLICATION_SOURCE_TOTAL_BUFFER_KEY,HConstants.REPLICATION_SOURCE_TOTAL_BUFFER_DFAULT);
+    this.sleepForRetries=this.conf.getLong("replication.source.sleepforretries",1000);
+    this.maxRetriesMultiplier=this.conf.getInt("replication.source.maxretriesmultiplier",300);
+    this.eofAutoRecovery=conf.getBoolean("replication.source.eof.autorecovery",false);
+    this.entryBatchQueue=new LinkedBlockingQueue<>(batchCount);
+    LOG.info("peerClusterZnode=" + source.getQueueId() + ", ReplicationSourceWALReaderThread : "+ source.getPeerId()+ " inited, replicationBatchSizeCapacity="+ replicationBatchSizeCapacity+ ", replicationBatchCountCapacity="+ replicationBatchCountCapacity+ ", replicationBatchQueueCapacity="+ batchCount);
+  }
+  @Override public void run(){
+    int sleepMultiplier=1;
+    while (isReaderRunning()) {
+      try (WALEntryStream entryStream=new WALEntryStream(logQueue,fs,conf,currentPosition,source.getWALFileLengthProvider(),source.getServerWALsBelongTo(),source.getSourceMetrics())){
+        while (isReaderRunning()) {
+          if (!source.isPeerEnabled()) {
+            Threads.sleep(sleepForRetries);
+            continue;
+          }
+          if (!checkQuota()) {
+            continue;
+          }
+          WALEntryBatch batch=readWALEntries(entryStream);
+          currentPosition=entryStream.getPosition();
+          if (batch != null) {
+            LOG.debug("Read {} WAL entries eligible for replication",batch.getNbEntries());
+            entryBatchQueue.put(batch);
+            sleepMultiplier=1;
+          }
+ else {
+            handleEmptyWALEntryBatch(entryStream.getCurrentPath());
+            entryStream.reset();
+          }
+        }
+      }
+ catch (      IOException e) {
+        if (sleepMultiplier < maxRetriesMultiplier) {
+          LOG.debug("Failed to read stream of replication entries: " + e);
+          sleepMultiplier++;
+        }
+ else {
+          LOG.error("Failed to read stream of replication entries",e);
+          handleEofException(e);
+        }
+        Threads.sleep(sleepForRetries * sleepMultiplier);
+      }
+catch (      InterruptedException e) {
+        LOG.trace("Interrupted while sleeping between WAL reads");
+        Thread.currentThread().interrupt();
+      }
+    }
+  }
+  protected final boolean addEntryToBatch(  WALEntryBatch batch,  Entry entry){
+    WALEdit edit=entry.getEdit();
+    if (edit == null || edit.isEmpty()) {
+      LOG.debug("Edit null or empty for entry {} ",entry);
+      return false;
+    }
+    LOG.debug("updating TimeStampOfLastAttempted to {}, from entry {}, for source queue: {}",entry.getKey().getWriteTime(),entry.getKey(),this.source.getQueueId());
+    long entrySize=getEntrySizeIncludeBulkLoad(entry);
+    long entrySizeExcludeBulkLoad=getEntrySizeExcludeBulkLoad(entry);
+    batch.addEntry(entry);
+    updateBatchStats(batch,entry,entrySize);
+    boolean totalBufferTooLarge=acquireBufferQuota(entrySizeExcludeBulkLoad);
+    return totalBufferTooLarge || batch.getHeapSize() >= replicationBatchSizeCapacity || batch.getNbEntries() >= replicationBatchCountCapacity;
+  }
+  protected static final boolean switched(  WALEntryStream entryStream,  Path path){
+    Path newPath=entryStream.getCurrentPath();
+    return newPath == null || !path.getName().equals(newPath.getName());
+  }
+  protected WALEntryBatch readWALEntries(  WALEntryStream entryStream) throws IOException, InterruptedException {
+    Path currentPath=entryStream.getCurrentPath();
+    if (!entryStream.hasNext()) {
+      if (currentPath != null && switched(entryStream,currentPath)) {
+        return WALEntryBatch.endOfFile(currentPath);
+      }
+ else {
+        return null;
+      }
+    }
+    if (currentPath != null) {
+      if (switched(entryStream,currentPath)) {
+        return WALEntryBatch.endOfFile(currentPath);
+      }
+    }
+ else {
+      currentPath=entryStream.getCurrentPath();
+    }
+    WALEntryBatch batch=createBatch(entryStream);
+    for (; ; ) {
+      Entry entry=entryStream.next();
+      batch.setLastWalPosition(entryStream.getPosition());
+      entry=filterEntry(entry);
+      if (entry != null) {
+        if (addEntryToBatch(batch,entry)) {
+          break;
+        }
+      }
+      boolean hasNext=entryStream.hasNext();
+      if (switched(entryStream,currentPath)) {
+        batch.setEndOfFile(true);
+        break;
+      }
+      if (!hasNext) {
+        break;
+      }
+    }
+    return batch;
+  }
+  private void handleEmptyWALEntryBatch(  Path currentPath) throws InterruptedException {
+    LOG.trace("Didn't read any new entries from WAL");
+    if (source.isRecovered()) {
+      setReaderRunning(false);
+      entryBatchQueue.put(WALEntryBatch.NO_MORE_DATA);
+    }
+ else {
+      Thread.sleep(sleepForRetries);
+    }
+  }
+  private void handleEofException(  IOException e){
+    if ((e instanceof EOFException || e.getCause() instanceof EOFException) && logQueue.size() > 1 && this.eofAutoRecovery) {
+      try {
+        if (fs.getFileStatus(logQueue.peek()).getLen() == 0) {
+          LOG.warn("Forcing removal of 0 length log in queue: " + logQueue.peek());
+          logQueue.remove();
+          currentPosition=0;
+        }
+      }
+ catch (      IOException ioe) {
+        LOG.warn("Couldn't get file length information about log " + logQueue.peek());
+      }
+    }
+  }
+  public Path getCurrentPath(){
+    WALEntryBatch batchQueueHead=entryBatchQueue.peek();
+    if (batchQueueHead != null) {
+      return batchQueueHead.getLastWalPath();
+    }
+    return logQueue.peek();
+  }
+  private boolean checkQuota(){
+    if (totalBufferUsed.get() > totalBufferQuota) {
+      Threads.sleep(sleepForRetries);
+      return false;
+    }
+    return true;
+  }
+  protected final WALEntryBatch createBatch(  WALEntryStream entryStream){
+    return new WALEntryBatch(replicationBatchCountCapacity,entryStream.getCurrentPath());
+  }
+  protected final Entry filterEntry(  Entry entry){
+    Entry filtered=filter.filter(entry);
+    if (entry != null && (filtered == null || filtered.getEdit().size() == 0)) {
+      LOG.debug("Filtered entry for replication: {}",entry);
+      source.getSourceMetrics().incrLogEditsFiltered();
+    }
+    return filtered;
+  }
+  public WALEntryBatch take() throws InterruptedException {
+    return entryBatchQueue.take();
+  }
+  public WALEntryBatch poll(  long timeout) throws InterruptedException {
+    return entryBatchQueue.poll(timeout,TimeUnit.MILLISECONDS);
+  }
+  private long getEntrySizeIncludeBulkLoad(  Entry entry){
+    WALEdit edit=entry.getEdit();
+    WALKey key=entry.getKey();
+    return edit.heapSize() + sizeOfStoreFilesIncludeBulkLoad(edit) + key.estimatedSerializedSizeOf();
+  }
+  public static long getEntrySizeExcludeBulkLoad(  Entry entry){
+    WALEdit edit=entry.getEdit();
+    WALKey key=entry.getKey();
+    return edit.heapSize() + key.estimatedSerializedSizeOf();
+  }
+  private void updateBatchStats(  WALEntryBatch batch,  Entry entry,  long entrySize){
+    WALEdit edit=entry.getEdit();
+    batch.incrementHeapSize(entrySize);
+    Pair<Integer,Integer> nbRowsAndHFiles=countDistinctRowKeysAndHFiles(edit);
+    batch.incrementNbRowKeys(nbRowsAndHFiles.getFirst());
+    batch.incrementNbHFiles(nbRowsAndHFiles.getSecond());
+  }
+  private Pair<Integer,Integer> countDistinctRowKeysAndHFiles(  WALEdit edit){
+    List<Cell> cells=edit.getCells();
+    int distinctRowKeys=1;
+    int totalHFileEntries=0;
+    Cell lastCell=cells.get(0);
+    int totalCells=edit.size();
+    for (int i=0; i < totalCells; i++) {
+      if (CellUtil.matchingQualifier(cells.get(i),WALEdit.BULK_LOAD)) {
+        try {
+          BulkLoadDescriptor bld=WALEdit.getBulkLoadDescriptor(cells.get(i));
+          List<StoreDescriptor> stores=bld.getStoresList();
+          int totalStores=stores.size();
+          for (int j=0; j < totalStores; j++) {
+            totalHFileEntries+=stores.get(j).getStoreFileList().size();
+          }
+        }
+ catch (        IOException e) {
+          LOG.error("Failed to deserialize bulk load entry from wal edit. " + "Then its hfiles count will not be added into metric.");
+        }
+      }
+      if (!CellUtil.matchingRows(cells.get(i),lastCell)) {
+        distinctRowKeys++;
+      }
+      lastCell=cells.get(i);
+    }
+    Pair<Integer,Integer> result=new Pair<>(distinctRowKeys,totalHFileEntries);
+    return result;
+  }
+  private int sizeOfStoreFilesIncludeBulkLoad(  WALEdit edit){
+    List<Cell> cells=edit.getCells();
+    int totalStoreFilesSize=0;
+    int totalCells=edit.size();
+    for (int i=0; i < totalCells; i++) {
+      if (CellUtil.matchingQualifier(cells.get(i),WALEdit.BULK_LOAD)) {
+        try {
+          BulkLoadDescriptor bld=WALEdit.getBulkLoadDescriptor(cells.get(i));
+          List<StoreDescriptor> stores=bld.getStoresList();
+          int totalStores=stores.size();
+          for (int j=0; j < totalStores; j++) {
+            totalStoreFilesSize=(int)(totalStoreFilesSize + stores.get(j).getStoreFileSizeBytes());
+          }
+        }
+ catch (        IOException e) {
+          LOG.error("Failed to deserialize bulk load entry from wal edit. " + "Size of HFiles part of cell will not be considered in replication " + "request size calculation.",e);
+        }
+      }
+    }
+    return totalStoreFilesSize;
+  }
+  private boolean acquireBufferQuota(  long size){
+    return totalBufferUsed.addAndGet(size) >= totalBufferQuota;
+  }
+  public boolean isReaderRunning(){
+    return isReaderRunning && !isInterrupted();
+  }
+  public void setReaderRunning(  boolean readerRunning){
+    this.isReaderRunning=readerRunning;
+  }
+}

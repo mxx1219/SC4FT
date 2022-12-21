@@ -1,0 +1,8 @@
+void maximizeInst(UndetVar that,Warner warn) throws NoInstanceException {
+  if (that.inst == null) {
+    if (that.hibounds.isEmpty())     that.inst=syms.objectType;
+ else     if (that.hibounds.tail.isEmpty())     that.inst=that.hibounds.head;
+ else     that.inst=types.glb(that.hibounds);
+  }
+  if (that.inst == null || that.inst.isErroneous())   throw ambiguousNoInstanceException.setMessage("no.unique.maximal.instance.exists",that.qtype,that.hibounds);
+}

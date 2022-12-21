@@ -1,0 +1,55 @@
+package org.springframework.retry.support;
+import java.util.ArrayList;
+import java.util.List;
+import org.springframework.retry.RetryCallback;
+import org.springframework.retry.RetryContext;
+import org.springframework.retry.RetryPolicy;
+import org.springframework.retry.backoff.Sleeper;
+import org.springframework.retry.backoff.SleepingBackOffPolicy;
+public class RetrySimulator {
+  private final SleepingBackOffPolicy<?> backOffPolicy;
+  private final RetryPolicy retryPolicy;
+  public RetrySimulator(  SleepingBackOffPolicy<?> backOffPolicy,  RetryPolicy retryPolicy){
+    this.backOffPolicy=backOffPolicy;
+    this.retryPolicy=retryPolicy;
+  }
+  public RetrySimulation executeSimulation(  int numSimulations){
+    RetrySimulation simulation=new RetrySimulation();
+    for (int i=0; i < numSimulations; i++) {
+      simulation.addSequence(executeSingleSimulation());
+    }
+    return simulation;
+  }
+  public List<Long> executeSingleSimulation(){
+    StealingSleeper stealingSleeper=new StealingSleeper();
+    SleepingBackOffPolicy<?> stealingBackoff=backOffPolicy.withSleeper(stealingSleeper);
+    RetryTemplate template=new RetryTemplate();
+    template.setBackOffPolicy(stealingBackoff);
+    template.setRetryPolicy(retryPolicy);
+    try {
+      template.execute(new FailingRetryCallback());
+    }
+ catch (    FailingRetryException e) {
+    }
+catch (    Exception e) {
+      throw new RuntimeException("Unexpected exception",e);
+    }
+    return stealingSleeper.getSleeps();
+  }
+static class FailingRetryCallback implements RetryCallback<Object> {
+    public Object doWithRetry(    RetryContext context) throws Exception {
+      throw new FailingRetryException();
+    }
+  }
+@SuppressWarnings("serial") static class FailingRetryException extends Exception {
+  }
+static class StealingSleeper implements Sleeper {
+    private final List<Long> sleeps=new ArrayList<Long>();
+    public void sleep(    long backOffPeriod) throws InterruptedException {
+      sleeps.add(backOffPeriod);
+    }
+    public List<Long> getSleeps(){
+      return sleeps;
+    }
+  }
+}

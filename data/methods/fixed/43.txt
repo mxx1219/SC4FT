@@ -1,0 +1,8 @@
+public boolean equals(Object o){
+  if (o instanceof TestElementProperty) {
+    if (value != null) {
+      return value.equals(((JMeterProperty)o).getObjectValue());
+    }
+  }
+  return false;
+}

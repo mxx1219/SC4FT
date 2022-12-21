@@ -1,0 +1,197 @@
+private GraphTargetItem expression(Reference<Boolean> needsActivation,List<String> importedClasses,List<Integer> openedNamespaces,boolean allowEmpty,HashMap<String,Integer> registerVars,boolean inFunction,boolean inMethod,boolean allowRemainder,List<AssignableAVM2Item> variables) throws IOException, ParseException {
+  if (debugMode) {
+    System.out.println("expression:");
+  }
+  GraphTargetItem ret=null;
+  ParsedSymbol s=lex();
+  boolean existsRemainder=false;
+  boolean assocRight=false;
+switch (s.type) {
+case XML_STARTTAG_BEGIN:
+    lexer.pushback(s);
+  ret=xml(needsActivation,importedClasses,openedNamespaces,registerVars,inFunction,inMethod,variables);
+existsRemainder=true;
+break;
+case STRING:
+ret=new StringAVM2Item(null,s.value.toString());
+existsRemainder=true;
+break;
+case MINUS:
+s=lex();
+if (s.isType(SymbolType.DOUBLE)) {
+ret=new FloatValueAVM2Item(null,-(Double)s.value);
+existsRemainder=true;
+}
+ else if (s.isType(SymbolType.INTEGER)) {
+ret=new IntegerValueAVM2Item(null,-(Long)s.value);
+existsRemainder=true;
+}
+ else {
+lexer.pushback(s);
+GraphTargetItem num=expression(needsActivation,importedClasses,openedNamespaces,registerVars,inFunction,inMethod,true,variables);
+if (num instanceof IntegerValueAVM2Item) {
+((IntegerValueAVM2Item)num).value=-((IntegerValueAVM2Item)num).value;
+ret=num;
+}
+ else if (num instanceof FloatValueAVM2Item) {
+Double d=((FloatValueAVM2Item)num).value;
+if (d.isInfinite()) {
+((FloatValueAVM2Item)num).value=Double.NEGATIVE_INFINITY;
+}
+ else {
+((FloatValueAVM2Item)num).value=-d;
+}
+ret=(num);
+}
+ else {
+ret=(new SubtractAVM2Item(null,new IntegerValueAVM2Item(null,0L),num));
+}
+}
+break;
+case TYPEOF:
+expectedType(SymbolType.PARENT_OPEN);
+ret=new TypeOfAVM2Item(null,expression(needsActivation,importedClasses,openedNamespaces,registerVars,inFunction,inMethod,true,variables));
+expectedType(SymbolType.PARENT_CLOSE);
+existsRemainder=true;
+break;
+case TRUE:
+ret=new BooleanAVM2Item(null,true);
+existsRemainder=true;
+break;
+case NULL:
+ret=new NullAVM2Item(null);
+existsRemainder=true;
+break;
+case UNDEFINED:
+ret=new UndefinedAVM2Item(null);
+break;
+case FALSE:
+ret=new BooleanAVM2Item(null,false);
+existsRemainder=true;
+break;
+case CURLY_OPEN:
+s=lex();
+List<NameValuePair> nvs=new ArrayList<>();
+while (s.type != SymbolType.CURLY_CLOSE) {
+if (s.type != SymbolType.COMMA) {
+lexer.pushback(s);
+}
+s=lex();
+expected(s,lexer.yyline(),SymbolType.IDENTIFIER,SymbolType.STRING);
+GraphTargetItem n=new StringAVM2Item(null,s.value.toString());
+expectedType(SymbolType.COLON);
+GraphTargetItem v=expression(needsActivation,importedClasses,openedNamespaces,registerVars,inFunction,inMethod,allowRemainder,variables);
+NameValuePair nv=new NameValuePair(n,v);
+nvs.add(nv);
+s=lex();
+if (!s.isType(SymbolType.COMMA,SymbolType.CURLY_CLOSE)) {
+expected(s,lexer.yyline(),SymbolType.COMMA,SymbolType.CURLY_CLOSE);
+}
+}
+ret=new NewObjectAVM2Item(null,nvs);
+break;
+case BRACKET_OPEN:
+lexer.pushback(s);
+List<GraphTargetItem> inBrackets=new ArrayList<>();
+int arrCnt=brackets(needsActivation,importedClasses,openedNamespaces,inBrackets,registerVars,inFunction,inMethod,variables);
+ret=new NewArrayAVM2Item(null,inBrackets);
+break;
+case FUNCTION:
+s=lexer.lex();
+String fname="";
+if (s.isType(SymbolType.IDENTIFIER)) {
+fname=s.value.toString();
+}
+ else {
+lexer.pushback(s);
+}
+needsActivation.setVal(true);
+ret=function(needsActivation,importedClasses,0,TypeItem.UNBOUNDED,openedNamespaces,true,fname,false,variables);
+break;
+case NAN:
+ret=new NanAVM2Item(null);
+existsRemainder=true;
+break;
+case INFINITY:
+ret=new FloatValueAVM2Item(null,Double.POSITIVE_INFINITY);
+existsRemainder=true;
+break;
+case INTEGER:
+ret=new IntegerValueAVM2Item(null,(Long)s.value);
+existsRemainder=true;
+break;
+case DOUBLE:
+ret=new FloatValueAVM2Item(null,(Double)s.value);
+existsRemainder=true;
+break;
+case DELETE:
+GraphTargetItem varDel=expression(needsActivation,importedClasses,openedNamespaces,registerVars,inFunction,inMethod,true,variables);
+if (!isNameOrProp(varDel)) {
+throw new ParseException("Not a property or name",lexer.yyline());
+}
+ret=new DeletePropertyAVM2Item(varDel,lexer.yyline());
+break;
+case INCREMENT:
+case DECREMENT:
+GraphTargetItem varincdec=expression(needsActivation,importedClasses,openedNamespaces,registerVars,inFunction,inMethod,false,variables);
+if (!isNameOrProp(varincdec)) {
+throw new ParseException("Not a property or name",lexer.yyline());
+}
+if (s.type == SymbolType.INCREMENT) {
+ret=new PreIncrementAVM2Item(null,varincdec);
+}
+if (s.type == SymbolType.DECREMENT) {
+ret=new PreDecrementAVM2Item(null,varincdec);
+}
+existsRemainder=true;
+break;
+case NOT:
+ret=new NotItem(null,expression(needsActivation,importedClasses,openedNamespaces,registerVars,inFunction,inMethod,false,variables));
+existsRemainder=true;
+break;
+case PARENT_OPEN:
+ret=new ParenthesisItem(null,expression(needsActivation,importedClasses,openedNamespaces,registerVars,inFunction,inMethod,true,variables));
+expectedType(SymbolType.PARENT_CLOSE);
+ret=memberOrCall(needsActivation,importedClasses,openedNamespaces,ret,registerVars,inFunction,inMethod,variables);
+existsRemainder=true;
+break;
+case NEW:
+GraphTargetItem newvar=name(needsActivation,true,openedNamespaces,registerVars,inFunction,inMethod,variables,importedClasses);
+expectedType(SymbolType.PARENT_OPEN);
+ret=new ConstructSomethingAVM2Item(lexer.yyline(),openedNamespaces,newvar,call(needsActivation,importedClasses,openedNamespaces,registerVars,inFunction,inMethod,variables));
+existsRemainder=true;
+break;
+case IDENTIFIER:
+case THIS:
+case SUPER:
+case ATTRIBUTE:
+lexer.pushback(s);
+GraphTargetItem var=name(needsActivation,false,openedNamespaces,registerVars,inFunction,inMethod,variables,importedClasses);
+var=memberOrCall(needsActivation,importedClasses,openedNamespaces,var,registerVars,inFunction,inMethod,variables);
+ret=var;
+existsRemainder=true;
+break;
+default :
+GraphTargetItem excmd=expressionCommands(s,registerVars,inFunction,inMethod,-1,variables);
+if (excmd != null) {
+existsRemainder=true;
+ret=excmd;
+break;
+}
+lexer.pushback(s);
+}
+if (allowRemainder && existsRemainder) {
+GraphTargetItem rem=ret;
+do {
+rem=expressionRemainder(needsActivation,openedNamespaces,rem,registerVars,inFunction,inMethod,assocRight,variables,importedClasses);
+if (rem != null) {
+ret=rem;
+}
+}
+ while ((!assocRight) && (rem != null));
+}
+if (debugMode) {
+System.out.println("/expression");
+}
+return ret;
+}

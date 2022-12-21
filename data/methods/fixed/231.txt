@@ -1,0 +1,19 @@
+@Override public void removeAllAtmosphereResource(AtmosphereResource<?,?> r){
+  try {
+synchronized (r) {
+      if (store.size() > 0) {
+        for (        Broadcaster b : lookupAll()) {
+          try {
+            b.removeAtmosphereResource(r);
+          }
+ catch (          IllegalStateException ex) {
+            logger.trace(ex.getMessage(),ex);
+          }
+        }
+      }
+    }
+  }
+ catch (  Exception ex) {
+    logger.warn(ex.getMessage(),ex);
+  }
+}

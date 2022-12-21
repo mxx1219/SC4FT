@@ -1,0 +1,86 @@
+package org.apache.camel.model;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import javax.xml.bind.annotation.XmlAccessType;
+import javax.xml.bind.annotation.XmlAccessorType;
+import javax.xml.bind.annotation.XmlAttribute;
+import javax.xml.bind.annotation.XmlElement;
+import javax.xml.bind.annotation.XmlRootElement;
+import javax.xml.bind.annotation.XmlTransient;
+import org.apache.camel.Expression;
+import org.apache.camel.Processor;
+import org.apache.camel.processor.SortProcessor;
+import org.apache.camel.spi.RouteContext;
+import org.apache.camel.util.ObjectHelper;
+import org.apache.camel.builder.ExpressionBuilder.bodyExpression;
+@XmlRootElement(name="sort") @XmlAccessorType(XmlAccessType.FIELD) public class SortDefinition extends OutputDefinition<SortDefinition> {
+  @XmlTransient private Comparator comparator;
+  @XmlAttribute(required=false) private String comparatorRef;
+  @XmlElement(name="expression",required=false) private ExpressionSubElementDefinition expression;
+  public SortDefinition(){
+  }
+  public SortDefinition(  Expression expression){
+    setExpression(expression);
+  }
+  public SortDefinition(  Expression expression,  Comparator comparator){
+    this(expression);
+    this.comparator=comparator;
+  }
+  @Override public String toString(){
+    return "sort[" + getExpression() + " by: "+ (comparatorRef != null ? "ref:" + comparatorRef : comparator)+ "]";
+  }
+  @Override public String getShortName(){
+    return "sort";
+  }
+  @Override public Processor createProcessor(  RouteContext routeContext) throws Exception {
+    if (ObjectHelper.isNotEmpty(comparatorRef)) {
+      comparator=routeContext.getCamelContext().getRegistry().lookup(comparatorRef,Comparator.class);
+    }
+    if (comparator == null) {
+      comparator=new Comparator(){
+        public int compare(        Object o1,        Object o2){
+          return ObjectHelper.compare(o1,o2);
+        }
+      }
+;
+    }
+    if (getExpression() == null) {
+      setExpression(bodyExpression());
+    }
+    Expression exp=expression.getExpression();
+    return new SortProcessor(exp,getComparator());
+  }
+  @Override @SuppressWarnings("unchecked") public List<ProcessorDefinition> getOutputs(){
+    return Collections.EMPTY_LIST;
+  }
+  public Comparator getComparator(){
+    return comparator;
+  }
+  public void setComparator(  Comparator comparator){
+    this.comparator=comparator;
+  }
+  public String getComparatorRef(){
+    return comparatorRef;
+  }
+  public void setComparatorRef(  String comparatorRef){
+    this.comparatorRef=comparatorRef;
+  }
+  public ExpressionSubElementDefinition getExpression(){
+    return expression;
+  }
+  public void setExpression(  Expression expression){
+    this.expression=new ExpressionSubElementDefinition(expression);
+  }
+  public void setExpression(  ExpressionSubElementDefinition expression){
+    this.expression=expression;
+  }
+  public SortDefinition comparator(  Comparator comparator){
+    setComparator(comparator);
+    return this;
+  }
+  public SortDefinition comparatorRef(  String ref){
+    setComparatorRef(ref);
+    return this;
+  }
+}

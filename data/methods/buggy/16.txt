@@ -1,0 +1,56 @@
+MediaSessionImplBase(MediaSession instance,Context context,String id,SessionPlayer player,PendingIntent sessionActivity,Executor callbackExecutor,SessionCallback callback){
+  mContext=context;
+  mInstance=instance;
+  mHandlerThread=new HandlerThread("MediaSession_Thread");
+  mHandlerThread.start();
+  mHandler=new Handler(mHandlerThread.getLooper());
+  mSessionStub=new MediaSessionStub(this);
+  mSessionActivity=sessionActivity;
+  mCallback=callback;
+  mCallbackExecutor=callbackExecutor;
+  mAudioManager=(AudioManager)context.getSystemService(Context.AUDIO_SERVICE);
+  mPlayerCallback=new SessionPlayerCallback(this);
+  mSessionId=id;
+  mSessionUri=new Uri.Builder().scheme(MediaSessionImplBase.class.getName()).appendPath(id).appendPath(String.valueOf(SystemClock.elapsedRealtime())).build();
+  mSessionToken=new SessionToken(new SessionTokenImplBase(Process.myUid(),TYPE_SESSION,context.getPackageName(),mSessionStub));
+  String sessionCompatId=TextUtils.join(DEFAULT_MEDIA_SESSION_TAG_DELIM,new String[]{DEFAULT_MEDIA_SESSION_TAG_PREFIX,id});
+  ComponentName mbrComponent=null;
+synchronized (STATIC_LOCK) {
+    if (!sComponentNamesInitialized) {
+      sServiceComponentName=getServiceComponentByAction(MediaLibraryService.SERVICE_INTERFACE);
+      if (sServiceComponentName == null) {
+        sServiceComponentName=getServiceComponentByAction(MediaSessionService.SERVICE_INTERFACE);
+      }
+      sComponentNamesInitialized=true;
+    }
+    mbrComponent=sServiceComponentName;
+  }
+  if (mbrComponent == null) {
+    Intent intent=new Intent(Intent.ACTION_MEDIA_BUTTON,mSessionUri);
+    intent.setPackage(context.getPackageName());
+    mMediaButtonIntent=PendingIntent.getBroadcast(context,0,intent,0);
+    mbrComponent=new ComponentName(context,context.getClass());
+    mBroadcastReceiver=new MediaButtonReceiver();
+    IntentFilter filter=new IntentFilter(Intent.ACTION_MEDIA_BUTTON);
+    filter.addDataScheme(mSessionUri.getScheme());
+    context.registerReceiver(mBroadcastReceiver,filter);
+  }
+ else {
+    Intent intent=new Intent(Intent.ACTION_MEDIA_BUTTON,mSessionUri);
+    intent.setComponent(mbrComponent);
+    if (Build.VERSION.SDK_INT >= 26) {
+      mMediaButtonIntent=PendingIntent.getForegroundService(mContext,0,intent,0);
+    }
+ else {
+      mMediaButtonIntent=PendingIntent.getService(mContext,0,intent,0);
+    }
+    mBroadcastReceiver=null;
+  }
+  mSessionCompat=new MediaSessionCompat(context,sessionCompatId,mbrComponent,mMediaButtonIntent,mSessionToken);
+  mSessionLegacyStub=new MediaSessionLegacyStub(this);
+  mSessionCompat.setSessionActivity(sessionActivity);
+  mSessionCompat.setFlags(MediaSessionCompat.FLAG_HANDLES_QUEUE_COMMANDS);
+  updatePlayer(player);
+  mSessionCompat.setCallback(mSessionLegacyStub,mHandler);
+  mSessionCompat.setActive(true);
+}

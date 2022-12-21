@@ -1,0 +1,27 @@
+public FieldDeserializer createFieldDeserializerWithoutASM(ParserConfig mapping,Class<?> clazz,FieldInfo fieldInfo){
+  Method method=fieldInfo.getMethod();
+  Class<?> fieldClass=fieldInfo.getFieldClass();
+  if (fieldClass == boolean.class || fieldClass == Boolean.class) {
+    return new BooleanFieldDeserializer(mapping,clazz,fieldInfo);
+  }
+  if (fieldClass == int.class || fieldClass == Integer.class) {
+    return new IntegerFieldDeserializer(mapping,clazz,fieldInfo);
+  }
+  if (fieldClass == long.class || fieldClass == Long.class) {
+    return new LongFieldDeserializer(mapping,clazz,fieldInfo);
+  }
+  if (fieldClass == String.class) {
+    return new StringFieldDeserializer(mapping,clazz,fieldInfo);
+  }
+  if (fieldClass == List.class || fieldClass == ArrayList.class) {
+    Type fieldType=method.getGenericParameterTypes()[0];
+    if (fieldType instanceof ParameterizedType) {
+      Type itemType=((ParameterizedType)fieldType).getActualTypeArguments()[0];
+      if (itemType == String.class) {
+        return new ArrayListStringFieldDeserializer(mapping,clazz,fieldInfo);
+      }
+    }
+    return new ArrayListTypeFieldDeserializer(mapping,clazz,fieldInfo);
+  }
+  return new DefaultFieldDeserializer(mapping,clazz,fieldInfo);
+}

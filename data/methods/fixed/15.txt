@@ -1,0 +1,29 @@
+private static String wordWrap(String text,int startPos,int maxPos){
+  StringBuilder builder=new StringBuilder();
+  int pos=startPos;
+  String[] parts=text.split("\\n",-1);
+  boolean isBulleted=parts.length > 1;
+  for (  String part : parts) {
+    int lineStart=startPos;
+    while (!part.isEmpty()) {
+      if (pos < lineStart) {
+        builder.append(Strings.repeat(" ",lineStart - pos));
+        pos=lineStart;
+      }
+      int maxLength=maxPos - pos;
+      int length=part.length();
+      if (length > maxLength) {
+        length=part.lastIndexOf(' ',maxPos - pos) + 1;
+        if (length == 0) {
+          length=part.length();
+        }
+      }
+      builder.append(part.substring(0,length));
+      part=part.substring(length);
+      builder.append("\n");
+      pos=0;
+      lineStart=isBulleted ? startPos + 2 : startPos;
+    }
+  }
+  return builder.toString();
+}

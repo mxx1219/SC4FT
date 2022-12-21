@@ -1,0 +1,32 @@
+private void markForPropagation(LitChunk toChunk,int[] depth,int[] startingRegen,int[] adjDepths,int[] adjStartingRegen){
+  Vector3i pos=new Vector3i();
+  for (int z=0; z < ChunkConstants.SIZE_Z; ++z) {
+    for (int x=0; x < ChunkConstants.SIZE_X; ++x) {
+      int depthIndex=x + ChunkConstants.SIZE_X * z;
+      int start=startingRegen[depthIndex];
+      int adjStart=adjStartingRegen[depthIndex];
+      if (start - adjStart > 1) {
+        int initialDepth=Math.max(ChunkConstants.SUNLIGHT_REGEN_THRESHOLD - start,0);
+        int finalDepth=depth[depthIndex];
+        int strength=Math.min(start + initialDepth - ChunkConstants.SUNLIGHT_REGEN_THRESHOLD + 1,ChunkConstants.MAX_SUNLIGHT);
+        for (int i=initialDepth; i < finalDepth; ++i) {
+          sunlightPropagator.propagateFrom(toChunk.chunkToWorldPosition(x,ChunkConstants.SIZE_Y - i - 1,z),(byte)(strength));
+          if (strength < ChunkConstants.MAX_SUNLIGHT) {
+            strength++;
+          }
+        }
+      }
+ else {
+        int initialDepth=Math.max(adjDepths[depthIndex],ChunkConstants.SUNLIGHT_REGEN_THRESHOLD - start);
+        byte strength=(byte)Math.min(ChunkConstants.MAX_SUNLIGHT,start + initialDepth - ChunkConstants.SUNLIGHT_REGEN_THRESHOLD + 1);
+        for (int i=initialDepth; i <= depth[depthIndex]; ++i) {
+          sunlightPropagator.propagateFrom(toChunk.chunkToWorldPosition(x,ChunkConstants.SIZE_Y - i - 1,z),strength);
+          if (strength < ChunkConstants.MAX_SUNLIGHT) {
+            strength++;
+          }
+          pos.y--;
+        }
+      }
+    }
+  }
+}

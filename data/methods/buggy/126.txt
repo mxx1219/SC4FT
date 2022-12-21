@@ -1,0 +1,42 @@
+@Override public void run(){
+  int sleepMultiplier=1;
+  while (isReaderRunning()) {
+    try (WALEntryStream entryStream=new WALEntryStream(logQueue,fs,conf,currentPosition,source.getWALFileLengthProvider(),source.getServerWALsBelongTo(),source.getSourceMetrics())){
+      while (isReaderRunning()) {
+        if (!source.isPeerEnabled()) {
+          Threads.sleep(sleepForRetries);
+          continue;
+        }
+        if (!checkQuota()) {
+          continue;
+        }
+        WALEntryBatch batch=readWALEntries(entryStream);
+        currentPosition=entryStream.getPosition();
+        if (batch != null) {
+          LOG.debug("Read {} WAL entries eligible for replication",batch.getNbEntries());
+          entryBatchQueue.put(batch);
+          sleepMultiplier=1;
+        }
+ else {
+          handleEmptyWALEntryBatch(entryStream.getCurrentPath());
+          entryStream.reset();
+        }
+      }
+    }
+ catch (    IOException e) {
+      if (sleepMultiplier < maxRetriesMultiplier) {
+        LOG.debug("Failed to read stream of replication entries: " + e);
+        sleepMultiplier++;
+      }
+ else {
+        LOG.error("Failed to read stream of replication entries",e);
+        handleEofException(e);
+      }
+      Threads.sleep(sleepForRetries * sleepMultiplier);
+    }
+catch (    InterruptedException e) {
+      LOG.trace("Interrupted while sleeping between WAL reads");
+      Thread.currentThread().interrupt();
+    }
+  }
+}

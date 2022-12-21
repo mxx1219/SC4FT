@@ -1,0 +1,13 @@
+Message loadMessage(Location location) throws IOException {
+  JournalCommand<?> command=load(location);
+  KahaAddMessageCommand addMessage=null;
+switch (command.type()) {
+case KAHA_UPDATE_MESSAGE_COMMAND:
+    addMessage=((KahaUpdateMessageCommand)command).getMessage();
+  break;
+default :
+addMessage=(KahaAddMessageCommand)command;
+}
+Message msg=(Message)wireFormat.unmarshal(new DataInputStream(addMessage.getMessage().newInput()));
+return msg;
+}

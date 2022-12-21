@@ -1,0 +1,3 @@
+@Override public Object exec(String script,Map<String,Object> vars){
+  return exec(script,vars,Collections.singletonMap(CompilerSettings.NUMERIC_OVERFLOW,"true"));
+}

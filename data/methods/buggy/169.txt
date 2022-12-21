@@ -1,0 +1,19 @@
+private Message createMessage(byte code,byte[] payload){
+  byte resolved=messageCodesResolver.resolveP2p(code);
+  if (p2pMessageFactory != null && P2pMessageCodes.inRange(resolved)) {
+    return p2pMessageFactory.create(resolved,payload);
+  }
+  resolved=messageCodesResolver.resolveEth(code);
+  if (ethMessageFactory != null && EthMessageCodes.inRange(resolved)) {
+    return ethMessageFactory.create(resolved,payload);
+  }
+  resolved=messageCodesResolver.resolveShh(code);
+  if (shhMessageFactory != null && ShhMessageCodes.inRange(resolved)) {
+    return shhMessageFactory.create(resolved,payload);
+  }
+  resolved=messageCodesResolver.resolveBzz(code);
+  if (bzzMessageFactory != null && BzzMessageCodes.inRange(resolved)) {
+    return bzzMessageFactory.create(resolved,payload);
+  }
+  throw new IllegalArgumentException("No such message");
+}

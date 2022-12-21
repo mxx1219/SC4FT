@@ -1,0 +1,18 @@
+public DataFormatterDescriptor(IConfigurationElement config){
+  super(config);
+  this.id=config.getAttribute(RegistryConstants.ATTR_ID);
+  this.formatterType=new ObjectType(config.getAttribute(RegistryConstants.ATTR_CLASS));
+  this.name=config.getAttribute(RegistryConstants.ATTR_LABEL);
+  this.description=config.getAttribute(RegistryConstants.ATTR_DESCRIPTION);
+  IConfigurationElement[] propElements=config.getChildren(PropertyDescriptorEx.TAG_PROPERTY_GROUP);
+  for (  IConfigurationElement prop : propElements) {
+    properties.addAll(PropertyDescriptorEx.extractProperties(prop));
+  }
+  Class<?> objectClass=getObjectClass(config.getAttribute(RegistryConstants.ATTR_SAMPLE_CLASS));
+  try {
+    sample=(DBDDataFormatterSample)objectClass.newInstance();
+  }
+ catch (  Exception e) {
+    log.error("Could not instantiate data formatter '" + getId() + "' sample");
+  }
+}

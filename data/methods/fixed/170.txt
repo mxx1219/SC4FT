@@ -1,0 +1,15 @@
+public boolean isAutowireCandidate(String beanName,DependencyDescriptor descriptor) throws NoSuchBeanDefinitionException {
+  boolean isFactoryBean=(descriptor != null && descriptor.getDependencyType() != null && FactoryBean.class.isAssignableFrom(descriptor.getDependencyType()));
+  if (isFactoryBean) {
+    beanName=BeanFactoryUtils.transformedBeanName(beanName);
+  }
+  if (!containsBeanDefinition(beanName)) {
+    if (containsSingleton(beanName)) {
+      return isAutowireCandidate(beanName,new RootBeanDefinition(getType(beanName)),descriptor);
+    }
+ else     if (getParentBeanFactory() instanceof ConfigurableListableBeanFactory) {
+      return ((ConfigurableListableBeanFactory)getParentBeanFactory()).isAutowireCandidate(beanName,descriptor);
+    }
+  }
+  return isAutowireCandidate(beanName,getMergedLocalBeanDefinition(beanName),descriptor);
+}

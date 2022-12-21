@@ -1,0 +1,318 @@
+package org.lamport.tla.toolbox.jcloud;
+import com.google.common.base.Predicates.not;
+import org.jclouds.compute.predicates.NodePredicates.TERMINATED;
+import org.jclouds.compute.predicates.NodePredicates.inGroup;
+import org.jclouds.scriptbuilder.domain.Statements.exec;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
+import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.Properties;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.stream.Collectors;
+import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.IStatus;
+import org.eclipse.core.runtime.Status;
+import org.eclipse.core.runtime.jobs.Job;
+import org.jclouds.ContextBuilder;
+import org.jclouds.compute.ComputeService;
+import org.jclouds.compute.ComputeServiceContext;
+import org.jclouds.compute.RunNodesException;
+import org.jclouds.compute.RunScriptOnNodesException;
+import org.jclouds.compute.domain.ComputeMetadata;
+import org.jclouds.compute.domain.ExecChannel;
+import org.jclouds.compute.domain.ExecResponse;
+import org.jclouds.compute.domain.NodeMetadata;
+import org.jclouds.compute.domain.TemplateBuilder;
+import org.jclouds.compute.domain.internal.NodeMetadataImpl;
+import org.jclouds.compute.options.TemplateOptions;
+import org.jclouds.domain.LoginCredentials;
+import org.jclouds.io.Payload;
+import org.jclouds.logging.config.ConsoleLoggingModule;
+import org.jclouds.logging.slf4j.config.SLF4JLoggingModule;
+import org.jclouds.rest.AuthorizationException;
+import org.jclouds.scriptbuilder.statements.login.AdminAccess;
+import org.jclouds.ssh.SshClient;
+import org.jclouds.ssh.SshException;
+import org.jclouds.sshj.config.SshjSshClientModule;
+import org.lamport.tla.toolbox.tool.tlc.job.ITLCJobStatus;
+import org.lamport.tla.toolbox.tool.tlc.job.TLCJobFactory;
+import com.google.common.base.Charsets;
+import com.google.common.base.Predicate;
+import com.google.common.base.Predicates;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
+import com.google.common.io.Files;
+import com.google.inject.AbstractModule;
+public class CloudDistributedTLCJob extends Job {
+  private static final String SHUTDOWN_AFTER=System.getProperty(CloudDistributedTLCJob.class.getName() + ".shutdownMinutes","10");
+  private final String providerName;
+  private final String groupNameUUID;
+  private final Path modelPath;
+  private final int nodes;
+  private final Properties props;
+  private final CloudTLCInstanceParameters params;
+  private boolean isCLI=false;
+  private boolean doJfr=false;
+  public CloudDistributedTLCJob(  String aName,  File aModelFolder,  int numberOfWorkers,  final Properties properties,  CloudTLCInstanceParameters params){
+    super(aName);
+    this.providerName=aName;
+    this.nodes=numberOfWorkers;
+    this.params=params;
+    groupNameUUID=aName.toLowerCase() + "-" + UUID.randomUUID().toString();
+    props=properties;
+    modelPath=aModelFolder.toPath();
+  }
+  @Override protected IStatus run(  final IProgressMonitor monitor){
+    monitor.beginTask("Starting TLC model checker in the cloud",90 + (nodes > 1 ? 20 : 0));
+    if (!params.validateCredentials().equals(Status.OK_STATUS)) {
+      return params.validateCredentials();
+    }
+    ComputeServiceContext context=null;
+    try {
+      PayloadHelper.checkToolsJar();
+      monitor.subTask("Tweaking tla2tools.jar to contain the spec & model (in background)");
+      final ExecutorService executor=Executors.newSingleThreadExecutor();
+      final Future<Payload> future=executor.submit(null);
+      executor.shutdown();
+      if (monitor.isCanceled()) {
+        return Status.CANCEL_STATUS;
+      }
+      final Properties properties=new Properties();
+      params.mungeProperties(properties);
+      final Iterable<AbstractModule> modules=ImmutableSet.<AbstractModule>of(new SshjSshClientModule(),isCLI ? new ConsoleLoggingModule() : new SLF4JLoggingModule());
+      final ContextBuilder builder=ContextBuilder.newBuilder(params.getCloudProvider()).credentials(params.getIdentity(),params.getCredentials()).modules(modules).overrides(properties);
+      params.mungeBuilder(builder);
+      monitor.subTask("Initializing " + builder.getApiMetadata().getName());
+      context=builder.buildView(ComputeServiceContext.class);
+      final ComputeService compute=context.getComputeService();
+      monitor.worked(10);
+      if (monitor.isCanceled()) {
+        return Status.CANCEL_STATUS;
+      }
+      monitor.subTask(String.format("Looking for %sresusable node%s to quick-start model checking (output might show failed connection attempts)",nodes > 1 ? "" : "a ",nodes > 1 ? "s" : ""));
+      final Set<NodeMetadata> createNodesInGroup=nodes > 1 ? new HashSet<>() : findReusableNodes(compute,monitor);
+      monitor.worked(5);
+      if (monitor.isCanceled()) {
+        return Status.CANCEL_STATUS;
+      }
+ else       if (createNodesInGroup.isEmpty()) {
+        createNodesInGroup.addAll(provisionNodes(compute,monitor));
+        if (monitor.isCanceled()) {
+          return Status.CANCEL_STATUS;
+        }
+      }
+ else {
+        monitor.subTask(String.format("Lookup succeeded thus skipping provisioning steps 5 to 7",nodes > 1 ? "" : "a ",nodes > 1 ? "s" : ""));
+        ((Application.MyProgressMonitor)monitor).incSteps(2);
+        monitor.worked(35);
+      }
+      final NodeMetadata master=Iterables.getLast(createNodesInGroup);
+      final String hostname=Iterables.getFirst(master.getPublicAddresses(),null);
+      monitor.subTask("Copying tla2tools.jar to master node at " + hostname);
+      SshClient sshClient=context.utils().sshForNode().apply(master);
+      sshClient.put("/tmp/tla2tools.pack.gz",future.get());
+      sshClient.disconnect();
+      monitor.worked(10);
+      if (monitor.isCanceled()) {
+        return Status.CANCEL_STATUS;
+      }
+      final String tlcMasterCommand=" sudo shutdown -c && rm -rf /mnt/tlc/* && " + "cd /mnt/tlc/ && " + "unpack200 /tmp/tla2tools.pack.gz /tmp/tla2tools.jar"+ " && "+ "screen -dm -S tlc bash -c \" "+ "java " + params.getJavaVMArgs() + " "+ (doJfr ? params.getFlightRecording() + " " : "")+ "-Djava.io.tmpdir=/mnt/tlc/ "+ "-Dcom.sun.management.jmxremote "+ "-Dcom.sun.management.jmxremote.port=5400 "+ "-Dcom.sun.management.jmxremote.ssl=false "+ "-Dcom.sun.management.jmxremote.authenticate=false "+ params.getJavaSystemProperties()+ " "+ "-jar /tmp/tla2tools.jar "+ params.getTLCParameters()+ " && "+ "sudo shutdown -h +"+ SHUTDOWN_AFTER+ "\"";
+      monitor.subTask("Starting TLC model checker process on the master node (in background)");
+      final ExecResponse response=compute.runScriptOnNode(master.getId(),exec(tlcMasterCommand),new TemplateOptions().overrideLoginCredentials(master.getCredentials()).runAsRoot(false).wrapInInitScript(true).blockOnComplete(false).blockUntilRunning(false));
+      throwExceptionOnErrorResponse(master,response,"Starting TLC model checker process on the master node");
+      monitor.worked(5);
+      if (nodes > 1) {
+        final Predicate<NodeMetadata> isMaster=new Predicate<NodeMetadata>(){
+          private final String masterHostname=master.getHostname();
+          public boolean apply(          NodeMetadata nodeMetadata){
+            final String hostname=nodeMetadata.getHostname();
+            return masterHostname.equals(hostname);
+          }
+        }
+;
+        monitor.subTask("Make TLC code available to all worker node(s)");
+        Map<? extends NodeMetadata,ExecResponse> execResponse=compute.runScriptOnNodesMatching(isMaster,exec("cp /tmp/tla2tools.jar /var/www/html/tla2tools.jar && " + "zip -d /var/www/html/tla2tools.jar model/*.tla model/*.cfg model/generated.properties"),new TemplateOptions().runAsRoot(true).wrapInInitScript(false));
+        throwExceptionOnErrorResponse(execResponse,"Make TLC code available to all worker node");
+        monitor.worked(10);
+        if (monitor.isCanceled()) {
+          return Status.CANCEL_STATUS;
+        }
+        final Predicate<NodeMetadata> onWorkers=new Predicate<NodeMetadata>(){
+          private final Iterable<? extends NodeMetadata> workers=Iterables.filter(createNodesInGroup,new Predicate<NodeMetadata>(){
+            private final String masterHostname=master.getHostname();
+            public boolean apply(            NodeMetadata nodeMetadata){
+              return !masterHostname.equals(nodeMetadata.getHostname());
+            }
+          }
+);
+          public boolean apply(          NodeMetadata nodeMetadata){
+            return Iterables.contains(workers,nodeMetadata);
+          }
+        }
+;
+        monitor.subTask("Starting TLC workers on the remaining node(s) (in background)");
+        final String privateHostname=Iterables.getOnlyElement(master.getPrivateAddresses());
+        execResponse=compute.runScriptOnNodesMatching(onWorkers,exec("cd /mnt/tlc/ && " + "wget http://" + privateHostname + "/tla2tools.jar && "+ "screen -dm -S tlc bash -c \" "+ "java "+ params.getJavaWorkerVMArgs()+ " "+ "-Djava.io.tmpdir=/mnt/tlc/ "+ "-Dcom.sun.management.jmxremote "+ "-Dcom.sun.management.jmxremote.port=5400 "+ "-Dcom.sun.management.jmxremote.ssl=false "+ "-Dcom.sun.management.jmxremote.authenticate=false "+ params.getJavaWorkerSystemProperties()+ " "+ "-cp /mnt/tlc/tla2tools.jar "+ params.getTLCWorkerParameters()+ " "+ privateHostname+ " "+ "&& "+ "sudo shutdown -h now"+ "\""),new TemplateOptions().runAsRoot(false).wrapInInitScript(true).blockOnComplete(false).blockUntilRunning(false));
+        throwExceptionOnErrorResponse(execResponse,"Starting TLC workers");
+        monitor.worked(10);
+      }
+      final ExecChannel execChannel=sshClient.execChannel("until pids=$(pgrep -f \"^java .* -jar /tmp/tla2tools.jar\"); do sleep 1; done" + " && " + "touch /mnt/tlc/MC.out"+ " && "+ "tail -q -f -n +1 /mnt/tlc/MC.out --pid $(pgrep -f \"^java .* -jar /tmp/tla2tools.jar\")");
+      monitor.done();
+      return new CloudStatus(Status.OK,"org.lamport.tla.toolbox.jcloud",Status.OK,String.format("TLC is model checking at host %s. " + "Expect to receive an email at %s with the model checking result eventually.",hostname,props.get("result.mail.address")),null,new URL("http://" + hostname + "/munin/"),execChannel == null ? null : execChannel.getOutput(),sshClient);
+    }
+ catch (    ExecutionException|InterruptedException|RunNodesException|IOException|RunScriptOnNodesException|NoSuchElementException|AuthorizationException|SshException e) {
+      e.printStackTrace();
+      if (context != null) {
+        destroyNodes(context,groupNameUUID);
+      }
+      return new Status(Status.ERROR,"org.lamport.tla.toolbox.jcloud",e.getMessage(),e);
+    }
+catch (    ScriptException e) {
+      if (context != null) {
+        destroyNodes(context,groupNameUUID);
+      }
+      return new Status(Status.ERROR,"org.lamport.tla.toolbox.jcloud",e.getTitle(),e);
+    }
+ finally {
+      if (context != null) {
+        if (monitor.isCanceled()) {
+          destroyNodes(context,groupNameUUID);
+        }
+        context.close();
+      }
+    }
+  }
+  private Set<NodeMetadata> findReusableNodes(  final ComputeService compute,  final IProgressMonitor monitor) throws IOException {
+    final Set<? extends ComputeMetadata> potentialNodes=compute.listNodesDetailsMatching(null);
+    final Set<ComputeMetadata> runningNodes=potentialNodes.stream().filter(null).map(null).filter(null).collect(Collectors.toSet());
+    for (    final ComputeMetadata node : runningNodes) {
+      final String id=node.getId();
+      try {
+        final ExecResponse response=compute.runScriptOnNode(id,"sudo busctl call --system org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager CancelScheduledShutdown",TemplateOptions.Builder.overrideLoginCredentials(getLoginForCommandExecution()).runAsRoot(true).wrapInInitScript(false));
+        if (response.getExitStatus() == 0 && (response.getError() == null || response.getError().isEmpty()) && response.getOutput().indexOf("true") > 0) {
+          return new HashSet<>(Arrays.asList(new WrapperNodeMetadata(compute.getNodeMetadata(id),getLoginForCommandExecution())));
+        }
+      }
+ catch (      RuntimeException e) {
+        continue;
+      }
+    }
+    potentialNodes.removeAll(runningNodes);
+    for (    final ComputeMetadata node : potentialNodes) {
+      try {
+        final String id=node.getId();
+        compute.resumeNode(id);
+        return new HashSet<>(Arrays.asList(new WrapperNodeMetadata(compute.getNodeMetadata(id),getLoginForCommandExecution())));
+      }
+ catch (      RuntimeException e) {
+        continue;
+      }
+    }
+    return new HashSet<>();
+  }
+  private Set<? extends NodeMetadata> provisionNodes(  ComputeService compute,  IProgressMonitor monitor) throws RunNodesException, RunScriptOnNodesException {
+    final TemplateOptions templateOptions=compute.templateOptions();
+    templateOptions.inboundPorts(22,80,443);
+    templateOptions.runScript(AdminAccess.standard());
+    if (isCLI) {
+      templateOptions.tags(Arrays.asList("CLI"));
+    }
+    params.mungeTemplateOptions(templateOptions);
+    final TemplateBuilder templateBuilder=compute.templateBuilder();
+    templateBuilder.options(templateOptions);
+    templateBuilder.imageId(params.getImageId());
+    templateBuilder.hardwareId(params.getHardwareId());
+    params.mungeTemplateBuilder(templateBuilder);
+    monitor.subTask(String.format("Starting new %s %s instance%s in region %s.",nodes > 1 ? nodes : "a",params.getHardwareId(),nodes > 1 ? "s" : "",params.getRegion()));
+    final Set<? extends NodeMetadata> createNodesInGroup=compute.createNodesInGroup(groupNameUUID,nodes,templateBuilder.build());
+    monitor.worked(20);
+    if (monitor.isCanceled()) {
+      return createNodesInGroup;
+    }
+    monitor.subTask("Provisioning TLC environment on all node(s)");
+    final String email=props.getProperty(TLCJobFactory.MAIL_ADDRESS);
+    Map<? extends NodeMetadata,ExecResponse> execResponse=compute.runScriptOnNodesMatching(inGroup(groupNameUUID),exec("echo root: " + email + " >> /etc/aliases"+ " && "+ "echo never > /sys/kernel/mm/transparent_hugepage/defrag"+ " && "+ "echo 0 > /proc/sys/kernel/numa_balancing"+ " && "+ params.getCloudAPIShutdown(params.getCredentials())+ " && "+ "export DEBIAN_FRONTEND=noninteractive"+ " && "+ params.getHostnameSetup()+ " && "+ "apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 0x219BD9C9 && "+ "apt-add-repository 'deb http://repos.azulsystems.com/ubuntu stable main' && "+ params.getExtraRepositories()+ " && "+ "apt-get update"+ " && "+ "wget https://github.com/lemmy/jmx2munin/raw/df6ce053a6d178e7a70434ab2f91089acadf0525/jmx2munin_1.0_all.deb"+ " && "+ "dpkg -i jmx2munin_1.0_all.deb ; "+ "apt-get install --no-install-recommends -fy"+ " && "+ "echo unattended-upgrades unattended-upgrades/enable_auto_updates boolean true | debconf-set-selections"+ " && "+ "apt-get install --no-install-recommends mdadm e2fsprogs screen zip unattended-upgrades "+ params.getExtraPackages()+ " -y"+ " && "+ "apt-get install --no-install-recommends zulu-11 -y"+ " && "+ params.getOSFilesystemTuning()+ " && "+ "sed -i 's/UsePAM yes/UsePAM no/g' /etc/ssh/sshd_config"+ " && "+ "service ssh restart"+ " && "+ "mkdir -p /mnt/tlc/ && chmod 777 /mnt/tlc/ && "+ "ln -s /mnt/tlc/MC.out /var/www/html/MC.out && "+ "ln -s /mnt/tlc/MC.out /var/www/html/MC.txt && "+ "ln -s /mnt/tlc/MC.err /var/www/html/MC.err && "+ "ln -s /mnt/tlc/tlc.jfr /var/www/html/tlc.jfr"),new TemplateOptions().runAsRoot(true).wrapInInitScript(false));
+    throwExceptionOnErrorResponse(execResponse,"Provisioning TLC environment on all nodes");
+    monitor.worked(10);
+    if (monitor.isCanceled()) {
+      return createNodesInGroup;
+    }
+    monitor.subTask("Installing security relevant system package upgrades (in background)");
+    execResponse=compute.runScriptOnNodesMatching(inGroup(groupNameUUID),exec("screen -dm -S security bash -c \"/usr/bin/unattended-upgrades\""),new TemplateOptions().runAsRoot(true).wrapInInitScript(true).blockOnComplete(false).blockUntilRunning(false));
+    throwExceptionOnErrorResponse(execResponse,"Installing security relevant system package upgrades");
+    monitor.worked(5);
+    return createNodesInGroup;
+  }
+  private void throwExceptionOnErrorResponse(  final Map<? extends NodeMetadata,ExecResponse> execResponse,  final String step){
+    execResponse.forEach(null);
+  }
+  private void throwExceptionOnErrorResponse(  final NodeMetadata node,  final ExecResponse execResponse,  final String step){
+    if (execResponse.getExitStatus() > 0) {
+      throw new ScriptException(node,execResponse,step);
+    }
+  }
+  public void setIsCLI(  boolean cli){
+    this.isCLI=cli;
+  }
+  public void setDoJfr(  boolean doIt){
+    this.doJfr=doIt;
+  }
+  private static void destroyNodes(  final ComputeServiceContext ctx,  final String groupname){
+    final ComputeService computeService=ctx.getComputeService();
+    if (computeService != null) {
+      Set<? extends NodeMetadata> destroyed=computeService.destroyNodesMatching(Predicates.<NodeMetadata>and(not(TERMINATED),inGroup(groupname)));
+      System.out.printf("<< destroyed nodes %s%n",destroyed);
+    }
+  }
+@SuppressWarnings("serial") class ScriptException extends RuntimeException {
+    private final String title;
+    public ScriptException(    final NodeMetadata node,    final ExecResponse exec,    final String step){
+      super(exec.getOutput());
+      this.title=String.format("Launching TLC on %s unsuccessful.\nStep '%s' failed on node '%s'.",params.getCloudProvider(),step,node.getName());
+    }
+    public String getTitle(){
+      return title;
+    }
+  }
+class CloudStatus extends Status implements ITLCJobStatus {
+    private final URL url;
+    private final InputStream output;
+    private final SshClient sshClient;
+    public CloudStatus(    int severity,    String pluginId,    int code,    String message,    Throwable exception,    URL url,    InputStream output,    SshClient sshClient){
+      super(severity,pluginId,code,message,exception);
+      this.url=url;
+      this.output=output;
+      this.sshClient=sshClient;
+    }
+    @Override public URL getURL(){
+      return url;
+    }
+    @Override public InputStream getOutput(){
+      return this.output;
+    }
+    public void killTLC(){
+      sshClient.execChannel(String.format("sudo shutdown -h +%s && kill $(pgrep -f tla2tools.jar)",SHUTDOWN_AFTER));
+    }
+  }
+  private static LoginCredentials getLoginForCommandExecution() throws IOException {
+    final String user=System.getProperty("user.name");
+    final String privateKey=Files.toString(new File(System.getProperty("user.home") + "/.ssh/id_rsa"),Charsets.UTF_8);
+    return LoginCredentials.builder().user(user).privateKey(privateKey).build();
+  }
+class WrapperNodeMetadata extends NodeMetadataImpl {
+    public WrapperNodeMetadata(    final NodeMetadata m,    final LoginCredentials credentials){
+      super(m.getProviderId(),m.getName(),m.getId(),m.getLocation(),m.getUri(),m.getUserMetadata(),m.getTags(),m.getGroup(),m.getHardware(),m.getImageId(),m.getOperatingSystem(),m.getStatus(),m.getBackendStatus(),m.getLoginPort(),m.getPublicAddresses(),m.getPrivateAddresses(),credentials,m.getHostname());
+    }
+  }
+}
