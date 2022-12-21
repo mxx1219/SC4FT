@@ -8,7 +8,7 @@ I. Requirements
 
 II. Declaration
 --------------------
- - The syntax checker used in TRANSFER (ICSE'22) for the constructions of the two large-scale datasets (Dataset_FL and Dataset_PR).
+ - The syntax checker used in TRANSFER (ICSE'22) for the construction of the two large-scale datasets (Dataset_FL and Dataset_PR).
 
 III. Usage
 --------------------
@@ -16,7 +16,6 @@ III. Usage
 java -jar SC4FT-1.0-SNAPSHOT-jar-with-dependencies.jar <data_dir> true/false
 
 ```
-
 ```
 e.g. java -jar SC4FT-1.0-SNAPSHOT-jar-with-dependencies.jar /path_to_this_project/data/ true
 ```
